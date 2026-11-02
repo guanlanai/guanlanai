@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/guanlanai/guanlanai/internal/llm"
 	"github.com/guanlanai/guanlanai/internal/netguard"
+	"github.com/guanlanai/guanlanai/internal/resilience"
 )
 
 // Completer 使用 OpenAI 官方 SDK 调 Chat Completions。
@@ -22,6 +24,7 @@ type Completer struct {
 	policy     netguard.Policy
 	httpClient *http.Client
 	timeout    time.Duration
+	breaker    *resilience.Breaker
 }
 
 // NewCompleter 创建 Chat Completions 客户端。
@@ -33,6 +36,7 @@ func NewCompleter(policy netguard.Policy, timeout time.Duration) *Completer {
 		policy:     policy,
 		httpClient: netguard.NewHTTPClient(policy, timeout),
 		timeout:    timeout,
+		breaker:    resilience.New(5, 30*time.Second),
 	}
 }
 
@@ -46,6 +50,9 @@ func (c *Completer) Complete(ctx context.Context, req llm.CompletionRequest) (*l
 	}
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("模型不能为空")
+	}
+	if err := c.breaker.Allow(); err != nil {
+		return nil, fmt.Errorf("%w: %w", llm.ErrValidationUnavailable, err)
 	}
 
 	client := openai.NewClient(
@@ -81,8 +88,14 @@ func (c *Completer) Complete(ctx context.Context, req llm.CompletionRequest) (*l
 
 	response, err := client.Chat.Completions.New(ctx, params)
 	if err != nil {
+		if isTransientLLMError(err) {
+			c.breaker.Record(false)
+		} else {
+			c.breaker.Record(true)
+		}
 		return nil, mapError(err)
 	}
+	c.breaker.Record(true)
 	if len(response.Choices) == 0 {
 		return nil, errors.New("模型没有返回候选结果")
 	}
@@ -107,6 +120,21 @@ func supportsTemperature(model string) bool {
 		}
 	}
 	return true
+}
+
+func isTransientLLMError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, llm.ErrValidationUnavailable) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusTooManyRequests || apiErr.StatusCode >= 500
+	}
+	return false
 }
 
 func mapError(err error) error {

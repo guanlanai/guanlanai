@@ -365,7 +365,7 @@ type Snapshot struct {
 - Binance klines：15m/1h/4h/1d/1w；`limit=500`。
 - CoinGecko 只做兜底，免费额度低；失败时宁可提示数据不可用，也不编造。
 - 缓存：价格 15–30s，分钟线 60s，日线 10–15 分钟，符号元数据 24h；用 `singleflight` 合并并发请求。
-- 重试：429/5xx 最多 2 次，指数退避 + 抖动；尊重 `Retry-After`；连续失败触发 30s 熔断。
+- 重试：429/5xx 最多 2 次，指数退避 + 抖动；尊重 `Retry-After`；连续失败触发 30s 熔断（已实现于 `internal/resilience`）。
 - 数据质量：
   - 指标至少需要 200 根 K 线；不足则标记 `Partial` 并减少指标。
   - 少于 50 根时拒绝给交易计划，只说明数据不足。
@@ -510,7 +510,7 @@ type Request struct {
 - 全局并发：LLM 16、行情 8；超出排队，排队超时返回“繁忙”。
 - 单次请求上限：prompt 6k tokens、输出 1.2k tokens、工具循环 3 轮。
 - 全局日预算：即使有人滥用，也有 `GLOBAL_DAILY_LLM_TOKENS` 硬上限；达到后暂停 LLM 分析并提示。
-- Telegram 发送限速：每 chat 约 1 条/秒，全局遵守 API 限制；429 按 `retry_after` 退避。
+- Telegram 发送限速：每 chat 约 1 条/秒，全局 25 条/秒；429 按 `retry_after` 退避。已实现于 `RateLimitedSender`。
 - 封禁：`users.status=banned`；MVP 可通过 `ADMIN_USER_IDS` + 管理命令或直接改库操作。
 - 缓存：同一标的 + 模式 + 数据时间戳的 LLM 结果缓存 2–5 分钟，减少重复调用。
 - 不记录用户 Key；限流按 Telegram user ID，不依赖 IP（long polling 拿不到）。
@@ -619,7 +619,7 @@ TRADING_ENABLED=false
 
 - Oracle `VM.Standard.A1.Flex`，region `iad`（US-Ashburn），Ubuntu 26.04，`aarch64`，1 OCPU，5.8GB RAM，45GB 磁盘（41GB 可用），无 swap。
 - Docker 29.1.3 / Compose 2.40.3 已安装，`ubuntu` 已加入 `docker` 组；镜像 `guanlanai:phase0`、`phase1`、`phase2` 已加载。
-- `guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，均已切 `phase5`；容器用户 `PUID/PGID=1001`，无宿主端口发布，SQLite 文件权限 0600。
+- `guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，均已切 `phase6`；容器用户 `PUID/PGID=1001`，无宿主端口发布，SQLite 文件权限 0600。
 - `api.binance.com` 返回 451，`data-api.binance.vision` 返回 200，CoinGecko 200，OpenAI 401（网络可达）。
 - 22 端口用于 SSH；111（rpcbind）在监听，若无 NFS 需求建议 `systemctl disable --now rpcbind`，并确认 Security List 未放行。
 - 1 OCPU 上编译 Go 会很慢；优先本机/CI 构建 `linux/arm64` 镜像后推送或传输，避免在 VPS 上反复编译。
@@ -737,7 +737,7 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 - 全量测试、race、安全自查（重点：自定义 `base_url` 的 SSRF、Key 泄漏）、备份/恢复、部署文档、真实环境 smoke、日志脱敏复查。
 - 甲骨文 VPS 上线：确认架构与镜像匹配、Security List/NSG 只开 SSH、VPS 能访问 Binance/OpenAI、NTP 正常；先部署 staging bot 冒烟，再切 prod；备份同步到 VPS 外。
 - 验收：`go test -race ./...` 通过；Docker 重启后数据完整；备份可恢复；无交易入口；私网/元数据地址不可达；staging 与 prod 互不影响。
-- 实际状态：新增 `guanlanai backup`（`VACUUM INTO`）并已在 staging 生成可读取的备份；观点 summary/reasons/risks 增加长度上限，避免 Telegram 4096 截断；备份、恢复、回滚写入 `docs/OPERATIONS.md`。熔断器仍为 P1；CoinGecko 兜底为低优先级，暂不实现。
+- 实际状态：新增 `guanlanai backup`（`VACUUM INTO`）并已在 staging 生成可读取的备份；观点 summary/reasons/risks 增加长度上限，避免 Telegram 4096 截断；备份、恢复、回滚写入 `docs/OPERATIONS.md`。P1 补丁已实现 Telegram 发送限速/429 和 Binance/OpenAI 熔断器；CoinGecko 兜底为低优先级，暂不实现。
 
 **总计约 10–15 个开发日（2–3 周）**，建议预留 20% buffer。相比股票+加密双市场，加密单市场大约省 1–2 天。
 

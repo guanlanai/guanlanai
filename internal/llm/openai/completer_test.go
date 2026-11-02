@@ -6,11 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/guanlanai/guanlanai/internal/llm"
 	"github.com/guanlanai/guanlanai/internal/netguard"
+	"github.com/guanlanai/guanlanai/internal/resilience"
 )
 
 func TestComplete(t *testing.T) {
@@ -120,5 +122,38 @@ func TestCompleteMapsInvalidKey(t *testing.T) {
 	})
 	if !errors.Is(err, llm.ErrInvalidKey) {
 		t.Fatalf("Complete() error = %v, want ErrInvalidKey", err)
+	}
+}
+
+func TestCompleterBreakerOpens(t *testing.T) {
+	var requests atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"message":"boom"}}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	completer := NewCompleter(netguard.Policy{AllowHTTP: true, AllowPrivate: true}, 2*time.Second)
+	completer.breaker = resilience.New(1, time.Minute)
+	req := llm.CompletionRequest{
+		BaseURL: server.URL + "/v1",
+		APIKey:  "sk-test",
+		Model:   "gpt-test",
+		System:  "system",
+		User:    "user",
+	}
+	if _, err := completer.Complete(context.Background(), req); err == nil {
+		t.Fatal("第一次调用应当失败")
+	}
+	before := requests.Load()
+	if _, err := completer.Complete(context.Background(), req); !errors.Is(err, llm.ErrValidationUnavailable) {
+		t.Fatalf("熔断错误 = %v", err)
+	}
+	if after := requests.Load(); after != before {
+		t.Fatalf("熔断后仍发请求: %d -> %d", before, after)
 	}
 }

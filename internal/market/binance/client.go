@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/guanlanai/guanlanai/internal/market"
+	"github.com/guanlanai/guanlanai/internal/resilience"
 )
 
 const maxResponseBytes = 8 * 1024 * 1024
@@ -22,6 +23,7 @@ type Client struct {
 	primary  string
 	fallback string
 	http     *http.Client
+	breaker  *resilience.Breaker
 
 	cacheMu sync.Mutex
 	cache   map[string]cacheEntry
@@ -63,7 +65,8 @@ func NewClient(primary, fallback string, timeout time.Duration) *Client {
 		http: &http.Client{
 			Timeout: timeout,
 		},
-		cache: make(map[string]cacheEntry),
+		breaker: resilience.New(5, 30*time.Second),
+		cache:   make(map[string]cacheEntry),
 	}
 }
 
@@ -294,6 +297,31 @@ func (c *Client) pairInfo(ctx context.Context, pair string) (PairInfo, error) {
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, out any) error {
+	if err := c.breaker.Allow(); err != nil {
+		return fmt.Errorf("%w: %w", market.ErrDataUnavailable, err)
+	}
+	err := c.getJSONOnce(ctx, path, out)
+	c.breaker.Record(!marketFailure(err))
+	return err
+}
+
+func marketFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var statusErr *HTTPStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.StatusCode == http.StatusTooManyRequests ||
+			statusErr.StatusCode == 451 ||
+			statusErr.StatusCode >= 500
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	return true
+}
+
+func (c *Client) getJSONOnce(ctx context.Context, path string, out any) error {
 	bases := []string{c.primary}
 	if c.fallback != "" && c.fallback != c.primary {
 		bases = append(bases, c.fallback)

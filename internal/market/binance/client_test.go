@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/guanlanai/guanlanai/internal/market"
+	"github.com/guanlanai/guanlanai/internal/resilience"
 )
 
 func testServer(t *testing.T, status int) *httptest.Server {
@@ -106,6 +108,30 @@ func TestSnapshot(t *testing.T) {
 	}
 	if snapshot.Partial {
 		t.Fatal("300 根 K 线不应标记 partial")
+	}
+}
+
+func TestBreakerOpensAfterRepeatedFailures(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "", time.Second)
+	client.breaker = resilience.New(2, time.Minute)
+	for i := 0; i < 2; i++ {
+		if _, err := client.Resolve(context.Background(), "BTC"); err == nil {
+			t.Fatal("预期失败")
+		}
+	}
+	before := requests.Load()
+	if _, err := client.Resolve(context.Background(), "BTC"); !errors.Is(err, market.ErrDataUnavailable) {
+		t.Fatalf("熔断错误 = %v", err)
+	}
+	if after := requests.Load(); after != before {
+		t.Fatalf("熔断后仍发请求: %d -> %d", before, after)
 	}
 }
 

@@ -49,6 +49,7 @@ guanlanai backup       # VACUUM INTO 备份，容器内用 docker compose exec
 - Phase 3 已部署到 prod/staging：镜像 `guanlanai:phase3`，Binance 行情 + 技术指标 + `gpt-5-mini` 结构化观点；staging 已验证 BTC/SOL/BNB，prod 已切换。
 - Phase 4 已部署到 prod/staging：镜像 `guanlanai:phase4`，会话上下文、追问、摘要裁剪、限流、usage 记录；staging 已验证，prod 已切换。
 - Phase 5 已部署到 prod/staging：镜像 `guanlanai:phase5`，新增 `guanlanai backup`（VACUUM INTO）、观点长度上限和测试补全；备份已在 staging 验证。
+- P1 加固已部署（`phase6`）：Telegram 发送每 chat 限速/全局限速/429 重试，以及 Binance/OpenAI 熔断器。
 - Oracle Security List/NSG 只开 SSH；不要暴露 8080，健康检查在容器内或用 `127.0.0.1`。
 - 测试 bot 可同机：独立 `.env`、Bot Token、`APP_MASTER_KEY`、SQLite、volume、compose project；不共享端口和密钥。
 - 镜像必须匹配 VPS 架构（Oracle Ampere 是 arm64）；优先构建 amd64/arm64 多架构镜像，或按 `uname -m` 在 VPS 构建。

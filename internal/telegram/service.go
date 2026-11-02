@@ -25,6 +25,7 @@ import (
 	"github.com/guanlanai/guanlanai/internal/netguard"
 	"github.com/guanlanai/guanlanai/internal/ratelimit"
 	"github.com/guanlanai/guanlanai/internal/render"
+	"github.com/guanlanai/guanlanai/internal/resilience"
 	"github.com/guanlanai/guanlanai/internal/secrets"
 	"github.com/guanlanai/guanlanai/internal/session"
 	"github.com/guanlanai/guanlanai/internal/text"
@@ -129,7 +130,7 @@ func New(
 	}
 
 	s.bot = b
-	s.sender = b
+	s.sender = NewRateLimitedSender(b, time.Second, 25, 2)
 	s.deleter = b
 	return s, nil
 }
@@ -957,6 +958,8 @@ func reason(err error) string {
 		return "地址不能包含 query 或 fragment"
 	case errors.Is(err, netguard.ErrRedirect):
 		return "不允许重定向"
+	case errors.Is(err, resilience.ErrOpen):
+		return "上游服务暂时熔断，请稍后再试"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "上游响应超时，请稍后再试"
 	}
