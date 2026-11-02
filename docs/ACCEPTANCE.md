@@ -3,14 +3,14 @@
 - 日期：2026-11-02
 - 环境：Oracle Cloud 免费 VPS（`aarch64`，region `iad`），prod + staging 同机
 - 版本：`guanlanai:phase5`
-- 结论：**有条件通过**。核心链路、Key 安全、会话、限流、备份和生产部署均通过；有两项既定目标未完全满足，见“偏差与待办”。
+- 结论：**通过**。核心链路、Key 安全、会话、限流、备份和生产部署均通过；首次观点 17–23 秒的耗时已确认接受，熔断器和 CoinGecko 兜底继续作为 P1。
 
 ## 验收结果
 
 | 项目 | 结果 | 证据 |
 | --- | --- | --- |
 | `/start → /key → BTC` 全流程 | ✅ 通过 | staging 与 prod 均实际完成配置、分析和返回卡片 |
-| 首次观点 p95 < 10s | ⚠️ 未达标 | 实测 BTC 18.3s、SOL 23.2s、BNB 16.7s、Phase 4 BTC 22.6s；`gpt-5-mini` reasoning 占主要耗时 |
+| 首次观点耗时 | ✅ 已确认接受 | 实测 BTC 18.3s、SOL 23.2s、BNB 16.7s、Phase 4 BTC 22.6s；`gpt-5-mini` reasoning 占主要耗时，原 `<10s` 目标不再适用 |
 | Binance USDT 现货主流币 | ✅ 通过 | BTC/SOL/BNB 实际分析成功；单元测试覆盖代码解析和 K 线 |
 | 非法/非支持代码提示 | ✅ 通过 | 返回“找不到该交易对，或暂不支持”，不会编造数据 |
 | 股票代码提示 | ✅ 通过 | 错误提示明确包含“股票暂不支持”，并有单元测试 |
@@ -75,10 +75,7 @@ prod/staging OPENAI_API_KEY 长度 0
 
 ## 偏差与待办
 
-1. **p95 < 10s 未达标**：当前 `gpt-5-mini` 实际 17–23 秒。可选方案：
-   - 将验收目标调整为 `< 30s`；
-   - 对 gpt-5 设置 `reasoning_effort=low`；
-   - 切换 `gpt-4.1-mini` 等非推理模型。
+1. **首次观点耗时已接受**：当前 `gpt-5-mini` 实际 17–23 秒，已确认按现状上线；后续如要提速，可设置 `reasoning_effort=low` 或换非推理模型。
 2. **熔断器未实施**：当前是重试 + 主备源 + 超时；熔断器列为 P1。
 3. **CoinGecko 兜底未实施**：当前仅 Binance USDT 现货；非 Binance 币种明确提示不支持，CoinGecko 列为 P1。
 4. **rpcbind 111**：外网 curl 超时，但宿主仍在监听；无 NFS 需求时建议禁用，并在 Oracle 控制台确认 Security List 只放行 SSH。
@@ -86,4 +83,4 @@ prod/staging OPENAI_API_KEY 长度 0
 
 ## 上线结论
 
-核心产品链路可用，生产已稳定运行。建议按“有条件通过”上线，并在下一轮 P1 处理熔断器、CoinGecko 和 p95 目标。
+核心产品链路可用，生产已稳定运行，验收通过。首次观点耗时按现状接受；下一轮 P1 处理熔断器、CoinGecko 兜底、Prometheus 指标和备份计划。

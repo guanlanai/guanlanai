@@ -745,7 +745,7 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 
 > 实际验收结果和偏差记录见 `docs/ACCEPTANCE.md`。
 
-- [ ] `/start → /key → BTC` 全流程可用，p95 首次观点 < 10s（不含外部服务极端抖动）。
+- [x] `/start → /key → BTC` 全流程可用；首次观点实测 17–23s，已确认接受（原 `<10s` 目标不再适用）。
 - [ ] 支持 Binance USDT 现货主流加密货币；非法/非支持代码有友好提示。
 - [ ] 股票代码明确提示“暂不支持股票”，不误判为加密货币。
 - [ ] Key 加密存储；消息删除；日志无明文；`/status` 只显示掩码。
