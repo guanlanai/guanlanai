@@ -1,0 +1,41 @@
+name: guanlanai-dev
+
+services:
+  bot:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+    image: guanlanai:${VERSION:-dev}
+    env_file:
+      - .env
+    environment:
+      APP_ENV: dev
+      INSTANCE_NAME: guanlanai-dev
+      DATABASE_PATH: /data/guanlanai.db
+      HTTP_ADDR: ":8080"
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

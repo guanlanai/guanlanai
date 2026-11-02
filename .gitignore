@@ -28,6 +28,13 @@ go.work.sum
 # env file
 .env
 
+# Local build/runtime data
+bin/
+data/
+*.db
+*.db-shm
+*.db-wal
+
 # Editor/IDE
 # .idea/
 # .vscode/

@@ -1,0 +1,16 @@
+.git
+.github
+/bin
+/data
+*.db
+*.db-shm
+*.db-wal
+*.out
+/coverage*
+/docs
+/AGENTS.md
+/README.md
+/.env
+/.env.*
+!/.env.example
+/deploy
