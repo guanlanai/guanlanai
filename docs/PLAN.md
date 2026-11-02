@@ -482,7 +482,8 @@ type Request struct {
 - 系统提示词中文，固定版本号，写入日志便于回溯。
 - 明确：不保证收益、不推荐杠杆/满仓、不提供仓位大小（除非用户提供风险偏好）、必须给失效条件。
 - `temperature=0.2`，`max_completion_tokens≈1200`，上下文上限 6k tokens。
-- 模型 allowlist 由 `MODEL_ALLOWLIST` 配置；`/model` 优先展示 allowlist，代理用户可额外拉取该 endpoint 的 `/models` 或手动输入模型名。
+- 模型 allowlist 由 `MODEL_ALLOWLIST` 配置；`/model` 优先展示 endpoint 的 `/models`，代理用户可额外手动输入模型名。
+- `STRICT_MODEL_LIST=true`（默认）时，模型必须出现在 endpoint 的 `/models` 返回列表中；仅当代理不支持 `/models` 时设为 false 以允许手动填写。
 - 默认模型选便宜的小模型；调用前检查用户 Key 在该 endpoint 是否有权限，失败则回退默认模型或提示换模型。
 - 自定义 `base_url` 可能不支持 `json_schema` 或工具调用；能力探测结果按 endpoint 缓存，并自动降级到 JSON 模式或纯文本。
 - 记录 `prompt_version`、模型、token 用量、耗时，便于以后调优和计费。
@@ -572,6 +573,7 @@ CUSTOM_BASE_URL_TIMEOUT=10s
 CUSTOM_BASE_URL_MAX_RESPONSE_BYTES=2097152
 DEFAULT_MODEL=
 MODEL_ALLOWLIST=
+STRICT_MODEL_LIST=true
 DEFAULT_MODE=swing
 LOG_LEVEL=info
 HTTP_ADDR=:8080

@@ -9,7 +9,7 @@ import (
 var configEnvKeys = []string{
 	"APP_ENV", "INSTANCE_NAME", "TELEGRAM_BOT_TOKEN", "APP_MASTER_KEY",
 	"DATABASE_PATH", "HTTP_ADDR", "LOG_LEVEL",
-	"DEFAULT_MODE", "DEFAULT_MODEL", "MODEL_ALLOWLIST",
+	"DEFAULT_MODE", "DEFAULT_MODEL", "MODEL_ALLOWLIST", "STRICT_MODEL_LIST",
 	"OPENAI_BASE_URL", "OPENAI_API_KEY",
 	"BINANCE_BASE_URL", "BINANCE_FALLBACK_BASE_URL", "COINGECKO_BASE_URL",
 	"ALLOW_SERVER_KEY", "ALLOW_CUSTOM_BASE_URL", "CUSTOM_BASE_URL_ALLOWLIST",
@@ -55,6 +55,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.TradingEnabled {
 		t.Fatal("TradingEnabled 默认必须为 false")
+	}
+	if !cfg.StrictModelList {
+		t.Fatal("StrictModelList 默认必须为 true")
 	}
 }
 

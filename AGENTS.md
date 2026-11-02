@@ -34,6 +34,7 @@ make docker            # 本机架构镜像
 - Telegram：`github.com/go-telegram/bot`。
 - 行情：Binance USDT 现货为主，默认 `BINANCE_BASE_URL=https://data-api.binance.vision`；`api.binance.com` 在当前 VPS 返回 451，CoinGecko 兜底；MVP 不接股票行情源。
 - LLM：官方 `github.com/openai/openai-go` + 自写薄 Agent 循环；走 Chat Completions 兼容协议，不要依赖 Responses API。不要引入 langchaingo、eino 等第二套 Agent 框架。
+- 模型列表来自用户 endpoint 的 `GET /models`，不是写死的；`STRICT_MODEL_LIST=true`（默认）要求模型必须出现在该列表，代理不支持 `/models` 时才设为 false。
 - 配置走环境变量，本地用 `.env`（已 gitignore）。约定名称：`TELEGRAM_BOT_TOKEN`、`APP_MASTER_KEY`、`OPENAI_API_KEY`（仅本地开发回退；正常流程使用用户自己的 Key）。
 
 ## 部署约定

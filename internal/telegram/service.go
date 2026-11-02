@@ -404,8 +404,40 @@ func (s *Service) handleModelCommand(ctx context.Context, chatID int64, args str
 			s.send(ctx, chatID, text.ModelInvalid("模型不在允许列表中"))
 			return
 		}
-		// 有 Key 时尽量用 endpoint 的 /models 校验；代理不支持 /models 时允许手动填写。
-		if usr.HasKey() && s.cipher != nil && s.validator != nil {
+
+		if s.cfg.StrictModelList {
+			if !usr.HasKey() {
+				s.send(ctx, chatID, text.NeedKey())
+				return
+			}
+			if s.cipher == nil || s.validator == nil {
+				s.send(ctx, chatID, text.Unavailable("模型校验"))
+				return
+			}
+			key, err := s.decryptKey(usr)
+			if err != nil {
+				s.send(ctx, chatID, text.KeyInvalid("无法解密已保存的 Key，请重新 /key"))
+				return
+			}
+			models, listErr := s.validator.ListModels(ctx, usr.APIBaseURL, key)
+			if listErr != nil {
+				if errors.Is(listErr, llm.ErrInvalidKey) {
+					s.send(ctx, chatID, text.KeyInvalid(reason(listErr)))
+				} else {
+					s.send(ctx, chatID, text.ModelInvalid("严格模式下必须能读取 endpoint 的 /models 列表"))
+				}
+				return
+			}
+			if len(models) == 0 {
+				s.send(ctx, chatID, text.ModelInvalid("endpoint 没有返回模型列表"))
+				return
+			}
+			if !contains(models, model) {
+				s.send(ctx, chatID, text.ModelInvalid("endpoint 未返回该模型"))
+				return
+			}
+		} else if usr.HasKey() && s.cipher != nil && s.validator != nil {
+			// 非严格模式：能读到列表时校验；代理不支持 /models 时允许手动填写。
 			key, err := s.decryptKey(usr)
 			if err != nil {
 				s.send(ctx, chatID, text.KeyInvalid("无法解密已保存的 Key，请重新 /key"))
@@ -421,6 +453,7 @@ func (s *Service) handleModelCommand(ctx context.Context, chatID int64, args str
 				return
 			}
 		}
+
 		if s.store == nil {
 			s.send(ctx, chatID, text.Unavailable("模型配置"))
 			return
@@ -451,6 +484,10 @@ func (s *Service) handleModelCommand(ctx context.Context, chatID int64, args str
 
 	models, err := s.validator.ListModels(ctx, usr.APIBaseURL, key)
 	if err != nil {
+		if s.cfg.StrictModelList {
+			s.send(ctx, chatID, text.ModelInvalid(reason(err)))
+			return
+		}
 		if len(s.cfg.ModelAllowlist) > 0 {
 			models = append([]string(nil), s.cfg.ModelAllowlist...)
 		} else {

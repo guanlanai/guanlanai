@@ -118,6 +118,7 @@ func newPhase2Service() (*Service, *fakeSender, *fakeStore, *fakeDeleter, *fakeV
 			DefaultMode:            "swing",
 			AllowCustomBaseURL:     true,
 			CustomBaseURLAllowlist: nil,
+			StrictModelList:        true,
 		},
 		sender:    sender,
 		deleter:   deleter,
@@ -266,6 +267,51 @@ func TestModelFlow(t *testing.T) {
 	}
 	if !strings.Contains(sender.last().Text, "失败") {
 		t.Fatalf("无效模型回复 = %q", sender.last().Text)
+	}
+}
+
+func TestStrictModelRequiresModelsList(t *testing.T) {
+	service, sender, store, _, validator := newPhase2Service()
+	ctx := context.Background()
+	store.usr = user.User{
+		TelegramUserID: 1,
+		KeyCiphertext:  []byte("enc:sk-test-key"),
+		KeyNonce:       []byte("nonce"),
+		KeyStatus:      "valid",
+		APIBaseURL:     "https://api.openai.com/v1",
+		Model:          "m1",
+		Mode:           "swing",
+	}
+	validator.listErr = llm.ErrModelsUnavailable
+
+	service.handle(ctx, privateUpdate("/model m2"))
+
+	if store.usr.Model != "m1" {
+		t.Fatalf("严格模式不应保存模型: %q", store.usr.Model)
+	}
+	if !strings.Contains(sender.last().Text, "严格模式") {
+		t.Fatalf("回复 = %q", sender.last().Text)
+	}
+}
+
+func TestNonStrictAllowsManualModel(t *testing.T) {
+	service, _, store, _, validator := newPhase2Service()
+	service.cfg.StrictModelList = false
+	ctx := context.Background()
+	store.usr = user.User{
+		TelegramUserID: 1,
+		KeyCiphertext:  []byte("enc:sk-test-key"),
+		KeyNonce:       []byte("nonce"),
+		KeyStatus:      "valid",
+		APIBaseURL:     "https://api.openai.com/v1",
+		Mode:           "swing",
+	}
+	validator.listErr = llm.ErrModelsUnavailable
+
+	service.handle(ctx, privateUpdate("/model m2"))
+
+	if store.usr.Model != "m2" {
+		t.Fatalf("非严格模式应允许手动模型: %q", store.usr.Model)
 	}
 }
 

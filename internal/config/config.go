@@ -25,6 +25,7 @@ type Config struct {
 	DefaultMode       string
 	DefaultModel      string
 	ModelAllowlist    []string
+	StrictModelList   bool
 
 	OpenAIBaseURL   string
 	OpenAIServerKey string
@@ -87,6 +88,9 @@ func Load() (Config, error) {
 
 	var err error
 	if cfg.DataRetentionDays, err = intEnv("DATA_RETENTION_DAYS", 30); err != nil {
+		return Config{}, err
+	}
+	if cfg.StrictModelList, err = boolEnv("STRICT_MODEL_LIST", true); err != nil {
 		return Config{}, err
 	}
 	if cfg.AllowServerKey, err = boolEnv("ALLOW_SERVER_KEY", false); err != nil {
