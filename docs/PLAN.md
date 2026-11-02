@@ -619,7 +619,7 @@ TRADING_ENABLED=false
 
 - Oracle `VM.Standard.A1.Flex`，region `iad`（US-Ashburn），Ubuntu 26.04，`aarch64`，1 OCPU，5.8GB RAM，45GB 磁盘（41GB 可用），无 swap。
 - Docker 29.1.3 / Compose 2.40.3 已安装，`ubuntu` 已加入 `docker` 组；镜像 `guanlanai:phase0`、`phase1`、`phase2` 已加载。
-- `guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，均已切 `phase4`；容器用户 `PUID/PGID=1001`，无宿主端口发布，SQLite 文件权限 0600。
+- `guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，均已切 `phase5`；容器用户 `PUID/PGID=1001`，无宿主端口发布，SQLite 文件权限 0600。
 - `api.binance.com` 返回 451，`data-api.binance.vision` 返回 200，CoinGecko 200，OpenAI 401（网络可达）。
 - 22 端口用于 SSH；111（rpcbind）在监听，若无 NFS 需求建议 `systemctl disable --now rpcbind`，并确认 Security List 未放行。
 - 1 OCPU 上编译 Go 会很慢；优先本机/CI 构建 `linux/arm64` 镜像后推送或传输，避免在 VPS 上反复编译。
@@ -730,13 +730,14 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 
 - 追问 Agent、上下文预算、摘要、`/reset`、每用户限流、全局并发、usage 记录、错误 UX。
 - 验收：追问能引用上一次观点；超限有提示；`/reset` 后不串上下文；并发压测不崩。
-- 实际状态：staging 已验证分析→追问→`/status`→`/reset`→无上下文追问的完整流程；usage 记录 `analysis` 1 次、`chat` 2 次，无错误。生产已切 `phase4`，`/reset` 会清空会话和摘要。
+- 实际状态：staging 已验证分析→追问→`/status`→`/reset`→无上下文追问的完整流程；usage 记录 `analysis` 1 次、`chat` 2 次，无错误。生产已切 `phase5`，`/reset` 会清空会话和摘要。
 
-### Phase 5：加固与上线（2–3 天）
+### Phase 5：加固与上线（已完成，2026-11-02）
 
 - 全量测试、race、安全自查（重点：自定义 `base_url` 的 SSRF、Key 泄漏）、备份/恢复、部署文档、真实环境 smoke、日志脱敏复查。
 - 甲骨文 VPS 上线：确认架构与镜像匹配、Security List/NSG 只开 SSH、VPS 能访问 Binance/OpenAI、NTP 正常；先部署 staging bot 冒烟，再切 prod；备份同步到 VPS 外。
 - 验收：`go test -race ./...` 通过；Docker 重启后数据完整；备份可恢复；无交易入口；私网/元数据地址不可达；staging 与 prod 互不影响。
+- 实际状态：新增 `guanlanai backup`（`VACUUM INTO`）并已在 staging 生成可读取的备份；观点 summary/reasons/risks 增加长度上限，避免 Telegram 4096 截断；备份、恢复、回滚写入 `docs/OPERATIONS.md`。CoinGecko 兜底和熔断器仍为 P1。
 
 **总计约 10–15 个开发日（2–3 周）**，建议预留 20% buffer。相比股票+加密双市场，加密单市场大约省 1–2 天。
 

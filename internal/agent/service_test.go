@@ -12,6 +12,7 @@ import (
 	"github.com/guanlanai/guanlanai/internal/analysis"
 	"github.com/guanlanai/guanlanai/internal/llm"
 	"github.com/guanlanai/guanlanai/internal/market"
+	"github.com/guanlanai/guanlanai/internal/session"
 	"github.com/guanlanai/guanlanai/internal/user"
 )
 
@@ -149,6 +150,47 @@ func TestAnalyzeNoModel(t *testing.T) {
 	_, err := service.Analyze(context.Background(), usr, "sk-test", "BTC", "swing")
 	if !errors.Is(err, ErrNoModel) {
 		t.Fatalf("Analyze() error = %v, want ErrNoModel", err)
+	}
+}
+
+func TestChatAndSummarize(t *testing.T) {
+	completer := &fakeCompleter{responses: []string{"追问回答", "会话摘要"}}
+	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, 4, testLogger())
+
+	chat, err := service.Chat(context.Background(), testUser(), "sk-test", "那止损呢？", "最近分析：{}")
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if chat.Content != "追问回答" || chat.Usage == nil {
+		t.Fatalf("chat = %#v", chat)
+	}
+	if completer.requests[0].JSONMode {
+		t.Fatal("追问不应使用 JSON 模式")
+	}
+
+	summary, err := service.Summarize(context.Background(), testUser(), "sk-test", "", []session.Message{
+		{Role: "user", Content: "分析 BTC"},
+		{Role: "assistant", Content: "偏多"},
+	})
+	if err != nil {
+		t.Fatalf("Summarize() error = %v", err)
+	}
+	if summary.Content != "会话摘要" {
+		t.Fatalf("summary = %#v", summary)
+	}
+}
+
+func TestParseOpinionTruncatesLongLists(t *testing.T) {
+	report := &analysis.Report{Symbol: "BTC", Pair: "BTCUSDT", Market: "crypto", Mode: "swing", AsOf: time.Now()}
+	opinion, err := ParseOpinion(`{
+		"direction":"neutral","confidence":"medium","summary":"x",
+		"reasons":["r1","r2","r3","r4","r5","r6"],"risks":["x1","x2","x3","x4","x5","x6"]
+	}`, report)
+	if err != nil {
+		t.Fatalf("ParseOpinion() error = %v", err)
+	}
+	if len(opinion.Reasons) != 5 || len(opinion.Risks) != 5 {
+		t.Fatalf("列表未裁剪: %d/%d", len(opinion.Reasons), len(opinion.Risks))
 	}
 }
 

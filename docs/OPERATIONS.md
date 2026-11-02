@@ -18,7 +18,7 @@
 
 - 生产容器：`guanlanai-prod-bot-1`
 - 测试容器：`guanlanai-staging-bot-1`
-- 镜像：staging 和 prod 当前均为 `guanlanai:phase4`
+- 镜像：staging 和 prod 当前均为 `guanlanai:phase5`
 - 容器用户：`PUID/PGID=1001`，与 `data/` 所有者一致
 - 不发布宿主端口；健康检查通过容器内 `wget` 访问 `/healthz`
 
@@ -59,33 +59,46 @@ sudo docker inspect --format '{{.State.Health.Status}}' guanlanai-staging-bot-1
 
 staging 验证通过后再更新 prod。正式发布建议用 git SHA 作为镜像 tag，便于回滚。
 
-## 备份（Phase 0 临时方案）
+## 备份
 
-Phase 0 还没有 `guanlanai backup` 子命令，先停机复制 SQLite：
+使用内置命令生成一致性备份（SQLite `VACUUM INTO`，不需要停机）：
 
 ```sh
 cd /opt/guanlanai/prod
-sudo mkdir -p /opt/guanlanai/backups
-backup="/opt/guanlanai/backups/prod-$(date -u +%Y%m%dT%H%M%SZ)"
-sudo mkdir -p "$backup"
-sudo docker compose stop
-sudo cp -a data/guanlanai.db* "$backup/"
-sudo docker compose start
+sudo docker compose exec -T bot guanlanai backup
 ```
 
-- 备份目录不要放在容器 volume 内。
-- 生产/测试分开备份。
-- 至少定期把备份拉到 VPS 外。
-- Phase 5 会加 `VACUUM INTO` 备份子命令和恢复演练。
+默认写入容器 `/data/backups`，对应宿主机：
+
+```text
+/opt/guanlanai/prod/data/backups/
+```
+
+也可以指定路径：
+
+```sh
+sudo docker compose exec -T bot guanlanai backup -db /data/guanlanai.db -out /data/backups
+```
+
+宿主机 cron 示例：
+
+```cron
+0 3 * * * cd /opt/guanlanai/prod && /usr/bin/docker compose exec -T bot guanlanai backup >> /var/log/guanlanai-backup.log 2>&1
+```
+
+- 备份文件权限为 `0600`。
+- 生产/测试分开备份；至少定期把备份拉到 VPS 外。
+- 建议保留 7–14 天，并定期做恢复演练。
 
 ## 恢复
 
 ```sh
 cd /opt/guanlanai/prod
 sudo docker compose stop
-sudo cp -a /opt/guanlanai/backups/<backup>/guanlanai.db* data/
-sudo chown 1001:1001 data/*
-sudo chmod 600 data/*
+sudo cp -a /opt/guanlanai/prod/data/backups/<backup>.db data/guanlanai.db
+sudo rm -f data/guanlanai.db-wal data/guanlanai.db-shm
+sudo chown 1001:1001 data/guanlanai.db
+sudo chmod 600 data/guanlanai.db
 sudo docker compose start
 ```
 

@@ -43,8 +43,8 @@ mkdir -p data
 本机构建并传到 VPS（Apple Silicon 默认构建 arm64）：
 
 ```sh
-VERSION=phase4 make docker
-docker save guanlanai:phase4 | gzip | ssh o1 'sudo docker load'
+VERSION=phase5 make docker
+docker save guanlanai:phase5 | gzip | ssh o1 'sudo docker load'
 ```
 
 如果是 x86 本机，使用 `make docker-multi` 或 `docker buildx build --platform linux/arm64`。
@@ -53,14 +53,14 @@ docker save guanlanai:phase4 | gzip | ssh o1 'sudo docker load'
 
 ```sh
 cd /opt/guanlanai/src
-sudo docker build -t guanlanai:phase4 .
+sudo docker build -t guanlanai:phase5 .
 ```
 
 ## 启动
 
 ```sh
 cd /opt/guanlanai/staging
-sudo env IMAGE=guanlanai:phase4 docker compose up -d
+sudo env IMAGE=guanlanai:phase5 docker compose up -d
 sudo docker compose ps
 sudo docker inspect --format '{{.State.Health.Status}}' guanlanai-staging-bot-1
 ```
@@ -69,7 +69,7 @@ staging 冒烟通过后再启动 prod：
 
 ```sh
 cd /opt/guanlanai/prod
-sudo env IMAGE=guanlanai:phase4 docker compose up -d
+sudo env IMAGE=guanlanai:phase5 docker compose up -d
 ```
 
 ## 检查

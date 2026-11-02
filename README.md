@@ -16,6 +16,8 @@ Phase 3 已部署：Binance USDT 现货行情、多周期技术指标、支撑�
 
 Phase 4 已部署：会话上下文、分析后追问、自动摘要裁剪、每用户限流、全局 LLM 并发和 usage 记录。
 
+Phase 5 已部署：新增 `guanlanai backup`（SQLite `VACUUM INTO`）、观点长度上限和运维文档；备份命令已在 staging 验证。
+
 ## 开发
 
 ```sh

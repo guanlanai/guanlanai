@@ -138,6 +138,14 @@ func validateOpinion(opinion *Opinion, report *analysis.Report) error {
 		return errors.New("risks 不能为空")
 	}
 
+	// 控制卡片长度，避免 Telegram 4096 限制和模型过度输出。
+	opinion.Summary = truncateRunes(strings.TrimSpace(opinion.Summary), 500)
+	opinion.Reasons = limitList(opinion.Reasons, 5, 240)
+	opinion.Risks = limitList(opinion.Risks, 5, 240)
+	if len(opinion.Reasons) == 0 || len(opinion.Risks) == 0 {
+		return errors.New("reasons/risks 不能为空")
+	}
+
 	opinion.Symbol = report.Symbol
 	opinion.Pair = report.Pair
 	opinion.Market = report.Market
@@ -195,6 +203,29 @@ func validateOpinion(opinion *Opinion, report *analysis.Report) error {
 
 func positive(value float64) bool {
 	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "…"
+}
+
+func limitList(values []string, maxItems, maxRunes int) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		result = append(result, truncateRunes(value, maxRunes))
+		if len(result) == maxItems {
+			break
+		}
+	}
+	return result
 }
 
 func extractJSON(content string) string {
