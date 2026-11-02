@@ -43,7 +43,8 @@ guanlanai backup       # VACUUM INTO 备份，容器内用 docker compose exec
 ## 部署约定
 
 - 生产目标：单台甲骨文免费 VPS + Docker Compose + SQLite volume；long polling，不需要入站 HTTP。
-- VPS 通过本机 SSH 配置登录；实测 Ubuntu 26.04 `aarch64`、A1.Flex 1 OCPU/5.8GB、region `iad`。Docker 29.1.3 / Compose 2.40.3 已安装。个人 SSH 别名不要写进仓库。
+- VPS 通过本机 SSH 配置登录；实测 Ubuntu 26.04 `aarch64`、A1.Flex 1 OCPU/5.8GB、region `iad`。Docker 29.1.3 / Compose 2.40.3 已安装。
+- 本机私有 SSH 别名/运维笔记放在 `.local/AGENT_NOTES.md`（已 gitignore）；部署前先读取。不要把个人别名写进仓库。
 - Phase 0 已部署：`guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，容器用户 `PUID/PGID=1001`，无宿主端口发布。
 - Phase 1 已部署到 prod/staging：镜像 `guanlanai:phase1`，`@GuanLanAI_bot` 和 `@ax_ha_1_bot` 均已连接。
 - Phase 2 已部署到 prod/staging：镜像 `guanlanai:phase2`，包含 Key 加密、`/key`、`/baseurl`、`/model`、`/mode`、SSRF 防护；两套环境均已用真实 Key 验证。

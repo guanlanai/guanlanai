@@ -35,6 +35,9 @@ data/
 *.db-shm
 *.db-wal
 
+# Local-only agent/ops notes (may contain personal SSH aliases)
+.local/
+
 # Editor/IDE
 # .idea/
 # .vscode/
