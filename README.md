@@ -33,3 +33,4 @@ make docker            # 构建本机架构镜像
 - VPS 部署步骤见 [deploy/README.md](deploy/README.md)
 - 日常运维、备份与回滚见 [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - 上线验收报告见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)
+- 私聊多会话/群组会话设计见 [docs/SESSION_DESIGN.md](docs/SESSION_DESIGN.md)
