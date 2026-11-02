@@ -8,6 +8,9 @@ import (
 
 	"github.com/guanlanai/guanlanai/internal/config"
 	"github.com/guanlanai/guanlanai/internal/health"
+	"github.com/guanlanai/guanlanai/internal/llm/openai"
+	"github.com/guanlanai/guanlanai/internal/netguard"
+	"github.com/guanlanai/guanlanai/internal/secrets"
 	"github.com/guanlanai/guanlanai/internal/storage/sqlite"
 	"github.com/guanlanai/guanlanai/internal/telegram"
 	"github.com/guanlanai/guanlanai/internal/version"
@@ -30,9 +33,34 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("执行数据库迁移: %w", err)
 	}
 
+	store := sqlite.NewStore(db)
+
+	var keyCipher secrets.Cipher
+	if cfg.MasterKey != "" {
+		keyCipher, err = secrets.NewAESGCM(cfg.MasterKey, 1)
+		if err != nil {
+			return fmt.Errorf("初始化 Key 加密器: %w", err)
+		}
+	} else {
+		logger.Warn("APP_MASTER_KEY 未配置；/key 功能不可用")
+	}
+
+	guard := netguard.Policy{
+		AllowHTTP:    cfg.AllowInsecureBaseURL,
+		AllowPrivate: cfg.AllowPrivateBaseURLForDev,
+		AllowedHosts: cfg.CustomBaseURLAllowlist,
+	}
+	validator := openai.NewValidator(
+		guard,
+		cfg.CustomBaseURLTimeout,
+		cfg.CustomBaseURLMaxBytes,
+		cfg.DefaultModel,
+		cfg.ModelAllowlist,
+	)
+
 	var telegramErr chan error
 	if cfg.TelegramToken != "" {
-		tg, err := telegram.New(cfg, logger)
+		tg, err := telegram.New(cfg, logger, store, keyCipher, validator, guard)
 		if err != nil {
 			return fmt.Errorf("初始化 Telegram 服务: %w", err)
 		}

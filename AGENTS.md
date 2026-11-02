@@ -41,7 +41,8 @@ make docker            # 本机架构镜像
 - 生产目标：单台甲骨文免费 VPS + Docker Compose + SQLite volume；long polling，不需要入站 HTTP。
 - 本机可用 `ssh o1` 登录 VPS；实测 Ubuntu 26.04 `aarch64`、A1.Flex 1 OCPU/5.8GB、region `iad`。Docker 29.1.3 / Compose 2.40.3 已安装。
 - Phase 0 已部署：`guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，容器用户 `PUID/PGID=1001`，无宿主端口发布。
-- Phase 1 已部署到 prod/staging：镜像 `guanlanai:phase1`，`@GuanLanAI_bot` 和 `@ax_ha_1_bot` 均已连接；消息日志已接入，等待 Phase 2。
+- Phase 1 已部署到 prod/staging：镜像 `guanlanai:phase1`，`@GuanLanAI_bot` 和 `@ax_ha_1_bot` 均已连接。
+- Phase 2 已部署到 prod/staging：镜像 `guanlanai:phase2`，包含 Key 加密、`/key`、`/baseurl`、`/model`、`/mode`、SSRF 防护；staging 已用真实 Key 验证，prod 需用户重新配置 Key。
 - Oracle Security List/NSG 只开 SSH；不要暴露 8080，健康检查在容器内或用 `127.0.0.1`。
 - 测试 bot 可同机：独立 `.env`、Bot Token、`APP_MASTER_KEY`、SQLite、volume、compose project；不共享端口和密钥。
 - 镜像必须匹配 VPS 架构（Oracle Ampere 是 arm64）；优先构建 amd64/arm64 多架构镜像，或按 `uname -m` 在 VPS 构建。
@@ -56,17 +57,21 @@ make docker            # 本机架构镜像
 - `internal/app/` — 生命周期、依赖装配
 - `internal/config/` — 环境变量解析与校验
 - `internal/health/` — `/healthz`、`/readyz`
-- `internal/storage/sqlite/` — SQLite 打开、迁移执行
+- `internal/storage/sqlite/` — SQLite 打开、迁移、用户配置读写
 - `internal/telegram/` — long polling、命令路由、per-chat 串行队列
 - `internal/render/` — HTML 转义、消息拆分、发送
 - `internal/text/` — 中文文案
+- `internal/secrets/` — AES-256-GCM 用户 Key 加密
+- `internal/netguard/` — 自定义 base_url 的 SSRF 防护
+- `internal/llm/` — Validator 接口和错误类型
+- `internal/llm/openai/` — OpenAI 兼容 `/models` 校验与模型列表
+- `internal/user/` — 用户模型与 Store 接口
 - `migrations/` — 嵌入二进制的 SQL
 - `deploy/{prod,staging}/` — VPS Compose 模板
 
 待创建（按此边界放置，不要提前建空包）：
 
 - `internal/agent/` — 会话循环、工具调用、上下文压缩
-- `internal/llm/` — `Provider` 接口 + OpenAI Chat Completions 兼容实现
 - `internal/market/` — 代码解析、行情/数据源
 - `internal/session/` — 按 chat/user 的会话与历史
 - `internal/billing/` — 付费/配额接口（占位）

@@ -18,7 +18,7 @@
 
 - 生产容器：`guanlanai-prod-bot-1`
 - 测试容器：`guanlanai-staging-bot-1`
-- 镜像：staging 和 prod 当前均为 `guanlanai:phase1`
+- 镜像：staging 和 prod 当前均为 `guanlanai:phase2`
 - 容器用户：`PUID/PGID=1001`，与 `data/` 所有者一致
 - 不发布宿主端口；健康检查通过容器内 `wget` 访问 `/healthz`
 
@@ -44,8 +44,8 @@ sudo docker compose exec -T bot wget -qO- http://127.0.0.1:8080/readyz
 本机构建并传到 VPS：
 
 ```sh
-VERSION=phase0 make docker
-docker save guanlanai:phase0 | gzip | ssh o1 'sudo docker load'
+VERSION=phase2 make docker
+docker save guanlanai:phase2 | gzip | ssh o1 'sudo docker load'
 ```
 
 先更新 staging：
@@ -53,7 +53,7 @@ docker save guanlanai:phase0 | gzip | ssh o1 'sudo docker load'
 ```sh
 ssh o1
 cd /opt/guanlanai/staging
-sudo env IMAGE=guanlanai:phase0 docker compose up -d
+sudo env IMAGE=guanlanai:phase2 docker compose up -d
 sudo docker inspect --format '{{.State.Health.Status}}' guanlanai-staging-bot-1
 ```
 

@@ -8,7 +8,9 @@
 
 Phase 0 已完成：Go 骨架、环境配置、SQLite 迁移、`/healthz` / `/readyz`、Dockerfile、Compose 和部署目录。
 
-Phase 1 已部署到生产和测试环境：Telegram long polling、私聊限制、per-chat 串行队列、`/start`、`/help`、`/status`、`/reset` 和基础占位回复。行情和 LLM 尚未接入。
+Phase 1 已部署到生产和测试环境：Telegram long polling、私聊限制、per-chat 串行队列和基础命令。
+
+Phase 2 已部署到生产和测试环境：`/key`、AES-256-GCM 加密存储、收到 Key 后删除消息、`/baseurl` 兼容代理、`/model`、`/mode` 和 SSRF 防护。行情和 LLM 分析尚未接入。
 
 ## 开发
 

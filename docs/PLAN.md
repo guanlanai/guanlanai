@@ -616,8 +616,8 @@ TRADING_ENABLED=false
 当前 VPS 实测（2026-11-02，`ssh o1`）：
 
 - Oracle `VM.Standard.A1.Flex`，region `iad`（US-Ashburn），Ubuntu 26.04，`aarch64`，1 OCPU，5.8GB RAM，45GB 磁盘（41GB 可用），无 swap。
-- Docker 29.1.3 / Compose 2.40.3 已安装，`ubuntu` 已加入 `docker` 组；镜像 `guanlanai:phase0`、`guanlanai:phase1` 已加载。
-- `guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，均已切 `phase1`；容器用户 `PUID/PGID=1001`，无宿主端口发布，SQLite 文件权限 0600。
+- Docker 29.1.3 / Compose 2.40.3 已安装，`ubuntu` 已加入 `docker` 组；镜像 `guanlanai:phase0`、`phase1`、`phase2` 已加载。
+- `guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，均已切 `phase2`；容器用户 `PUID/PGID=1001`，无宿主端口发布，SQLite 文件权限 0600。
 - `api.binance.com` 返回 451，`data-api.binance.vision` 返回 200，CoinGecko 200，OpenAI 401（网络可达）。
 - 22 端口用于 SSH；111（rpcbind）在监听，若无 NFS 需求建议 `systemctl disable --now rpcbind`，并确认 Security List 未放行。
 - 1 OCPU 上编译 Go 会很慢；优先本机/CI 构建 `linux/arm64` 镜像后推送或传输，避免在 VPS 上反复编译。
@@ -712,10 +712,11 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 - 验收：Bot 能稳定收发；长消息不超限；重启不 panic；同一 chat 消息顺序正确。
 - 实际状态：staging `@ax_ha_1_bot` 与 prod `@GuanLanAI_bot` 均已连接并 healthy；已用 `/start`、`BTC`、`/status` 验证收发链路。
 
-### Phase 2：用户与 Key（2–3 天）
+### Phase 2：用户与 Key（已完成，2026-11-02）
 
 - SQLite repository、用户/会话表、Key 加密、`/key` 收取与删除、Key 校验、`/baseurl`、`/model`、`/status` 掩码、自定义 endpoint 的 SSRF 防护。
 - 验收：Key 不以明文出现在 DB/日志；删除消息成功；错误 Key 有明确提示；自定义代理可用；私网/元数据地址被拒绝；重启后 Key 仍可用。
+- 实际状态：`internal/secrets`、`internal/netguard`、`internal/llm/openai`、`internal/user`、用户 SQLite repository 和 `/key`/`/baseurl`/`/model`/`/mode`/`/status` 已实现。staging 已用真实 Key 验证：Key 为 BLOB 密文、无 `sk-` 明文、`key_status=valid`；`/model` 与 `/mode` 已生效。prod 已切 `phase2`，用户需在 prod 重新配置 Key。
 
 ### Phase 3：行情与观点（2–3 天）
 
