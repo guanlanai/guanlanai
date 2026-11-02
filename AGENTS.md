@@ -2,7 +2,7 @@
 
 ## 项目
 
-观澜（Telegram Bot `@GuanLanAI_bot`）：Go 编写的 AI 辅助交易机器人。Phase 0 骨架已完成：Go module、配置、SQLite 迁移、健康检查、Dockerfile、Compose 和 VPS 部署目录；Telegram、行情、LLM 尚未接入。详细规划、阶段拆分和验收标准见 `docs/PLAN.md`，实现时按该文档推进，重大偏离先更新它。
+观澜（Telegram Bot `@GuanLanAI_bot`）：Go 编写的 AI 辅助交易机器人。Phase 0–5 已完成：Telegram、用户 Key、Binance 行情、LLM 观点、会话/限流和备份均已上线；详细规划见 `docs/PLAN.md`，验收结果见 `docs/ACCEPTANCE.md`。实现时按规划推进，重大偏离先更新文档。
 
 常用命令：
 

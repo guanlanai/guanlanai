@@ -936,7 +936,7 @@ func reason(err error) string {
 	case errors.Is(err, llm.ErrValidationUnavailable):
 		return "暂时无法连接上游，请稍后再试"
 	case errors.Is(err, market.ErrSymbolNotFound):
-		return "找不到该交易对，或暂不支持（目前仅支持 Binance USDT 现货）"
+		return "找不到该交易对，或暂不支持（目前仅支持 Binance USDT 现货；股票暂不支持）"
 	case errors.Is(err, market.ErrDataUnavailable):
 		return "行情数据暂时不可用，请稍后再试"
 	case errors.Is(err, agent.ErrNoModel):

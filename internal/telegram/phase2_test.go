@@ -13,6 +13,7 @@ import (
 	"github.com/guanlanai/guanlanai/internal/analysis"
 	"github.com/guanlanai/guanlanai/internal/config"
 	"github.com/guanlanai/guanlanai/internal/llm"
+	"github.com/guanlanai/guanlanai/internal/market"
 	"github.com/guanlanai/guanlanai/internal/netguard"
 	"github.com/guanlanai/guanlanai/internal/session"
 	"github.com/guanlanai/guanlanai/internal/user"
@@ -384,6 +385,13 @@ func TestAnalyzeFlowRequiresKey(t *testing.T) {
 
 	if !strings.Contains(sender.last().Text, "/key") {
 		t.Fatalf("回复 = %q", sender.last().Text)
+	}
+}
+
+func TestSymbolNotFoundReasonMentionsStocks(t *testing.T) {
+	message := reason(market.ErrSymbolNotFound)
+	if !strings.Contains(message, "股票") {
+		t.Fatalf("提示未说明股票不支持: %q", message)
 	}
 }
 
