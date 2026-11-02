@@ -72,6 +72,18 @@ cd /opt/guanlanai/prod
 sudo env IMAGE=guanlanai:phase5 docker compose up -d
 ```
 
+## 每日备份
+
+把 `deploy/backup.sh` 复制到 VPS 并安装 cron：
+
+```sh
+scp deploy/backup.sh o1:/opt/guanlanai/backup.sh
+ssh o1 'chmod 700 /opt/guanlanai/backup.sh'
+ssh o1 '(crontab -l 2>/dev/null; echo "15 3 * * * /opt/guanlanai/backup.sh >> /opt/guanlanai/backup.log 2>&1") | crontab -'
+```
+
+脚本备份 prod/staging，保留 14 天，日志写入 `/opt/guanlanai/backup.log`。
+
 ## 检查
 
 ```sh

@@ -33,7 +33,7 @@ guanlanai backup       # VACUUM INTO 备份，容器内用 docker compose exec
 
 - 单一 Go module：`github.com/guanlanai/guanlanai`，Go 1.26+（`modernc.org/sqlite` 当前版本要求）；不要建 `go.work`（已被 gitignore）。
 - Telegram：`github.com/go-telegram/bot`。
-- 行情：Binance USDT 现货为主，默认 `BINANCE_BASE_URL=https://data-api.binance.vision`；`api.binance.com` 在当前 VPS 返回 451。Phase 3 先只实现 Binance，CoinGecko 兜底待补；MVP 不接股票行情源。
+- 行情：Binance USDT 现货为主，默认 `BINANCE_BASE_URL=https://data-api.binance.vision`；`api.binance.com` 在当前 VPS 返回 451。Phase 3 先只实现 Binance，CoinGecko 兜底为低优先级、暂不实现；MVP 不接股票行情源。
 - LLM：官方 `github.com/openai/openai-go` + 自写薄 Agent 循环；走 Chat Completions 兼容协议，不要依赖 Responses API。不要引入 langchaingo、eino 等第二套 Agent 框架。
 - 模型列表来自用户 endpoint 的 `GET /models`，不是写死的；`STRICT_MODEL_LIST=true`（默认）要求模型必须出现在该列表，代理不支持 `/models` 时才设为 false。
 - `gpt-5` 等推理模型的 `completion_tokens` 包含 reasoning tokens；`MAX_OUTPUT_TOKENS` 生产环境用 4000，避免 JSON 被截断。
@@ -52,7 +52,7 @@ guanlanai backup       # VACUUM INTO 备份，容器内用 docker compose exec
 - Oracle Security List/NSG 只开 SSH；不要暴露 8080，健康检查在容器内或用 `127.0.0.1`。
 - 测试 bot 可同机：独立 `.env`、Bot Token、`APP_MASTER_KEY`、SQLite、volume、compose project；不共享端口和密钥。
 - 镜像必须匹配 VPS 架构（Oracle Ampere 是 arm64）；优先构建 amd64/arm64 多架构镜像，或按 `uname -m` 在 VPS 构建。
-- 当前 VPS 上 `api.binance.com` 返回 451，`data-api.binance.vision` 返回 200；默认走 vision，CoinGecko 兜底。
+- 当前 VPS 上 `api.binance.com` 返回 451，`data-api.binance.vision` 返回 200；默认走 vision；CoinGecko 兜底为低优先级。
 - 111（rpcbind）在监听；无 NFS 需求时禁用，并确认 Security List 未放行。
 
 ## 目录约定

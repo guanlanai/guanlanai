@@ -3,7 +3,7 @@
 - 日期：2026-11-02
 - 环境：Oracle Cloud 免费 VPS（`aarch64`，region `iad`），prod + staging 同机
 - 版本：`guanlanai:phase5`
-- 结论：**通过**。核心链路、Key 安全、会话、限流、备份和生产部署均通过；首次观点 17–23 秒的耗时已确认接受，熔断器和 CoinGecko 兜底继续作为 P1。
+- 结论：**通过**。核心链路、Key 安全、会话、限流、备份和生产部署均通过；首次观点 17–23 秒的耗时已确认接受；熔断器仍为 P1，CoinGecko 兜底为低优先级、暂不实施。
 
 ## 验收结果
 
@@ -77,10 +77,10 @@ prod/staging OPENAI_API_KEY 长度 0
 
 1. **首次观点耗时已接受**：当前 `gpt-5-mini` 实际 17–23 秒，已确认按现状上线；后续如要提速，可设置 `reasoning_effort=low` 或换非推理模型。
 2. **熔断器未实施**：当前是重试 + 主备源 + 超时；熔断器列为 P1。
-3. **CoinGecko 兜底未实施**：当前仅 Binance USDT 现货；非 Binance 币种明确提示不支持，CoinGecko 列为 P1。
+3. **CoinGecko 兜底暂不实施**：当前仅 Binance USDT 现货；非 Binance 币种明确提示不支持。按当前决定假设 Binance 可靠，CoinGecko 降为低优先级。
 4. **rpcbind 111**：外网 curl 超时，但宿主仍在监听；无 NFS 需求时建议禁用，并在 Oracle 控制台确认 Security List 只放行 SSH。
-5. **备份计划**：已做一次 VPS 外备份；建议配置每日 cron 和恢复演练记录。
+5. **备份计划**：每日 cron 已配置（03:15 UTC，prod/staging，保留 14 天）；已有一份 VPS 外备份。仍建议增加自动 VPS 外同步和恢复演练记录。
 
 ## 上线结论
 
-核心产品链路可用，生产已稳定运行，验收通过。首次观点耗时按现状接受；下一轮 P1 处理熔断器、CoinGecko 兜底、Prometheus 指标和备份计划。
+核心产品链路可用，生产已稳定运行，验收通过。首次观点耗时按现状接受；每日备份已配置。下一轮 P1 处理熔断器、Prometheus 指标；CoinGecko 为低优先级。

@@ -39,7 +39,7 @@
 | LLM | 官方 `github.com/openai/openai-go` + 自写薄 Agent 循环；走 Chat Completions 兼容协议 |
 | 兼容代理 | 每用户可配置 OpenAI 兼容 `base_url`；默认官方 endpoint |
 | 市场 | 仅加密货币；股票后置 |
-| 行情源 | Binance USDT 现货；默认 `data-api.binance.vision`（当前 VPS 上 `api.binance.com` 返回 451），CoinGecko 兜底 |
+| 行情源 | Binance USDT 现货；默认 `data-api.binance.vision`（当前 VPS 上 `api.binance.com` 返回 451），CoinGecko 兜底为低优先级、暂不实现 |
 | 存储 | 单机 SQLite，驱动用纯 Go 的 `modernc.org/sqlite`，避免 CGO |
 | 用户 Key | AES-256-GCM 加密后存 SQLite；收到 Key 后删除 Telegram 消息 |
 | 会话 | 仅私聊；消息默认保留 30 天；`/reset` 立即删除 |
@@ -132,7 +132,7 @@ Update worker pool（按 chat 串行）
         ├── 代码解析 / 意图识别
         │
         ├── 分析管道（确定性）
-        │     ├── market.Provider（Binance / CoinGecko）
+        │     ├── market.Provider（Binance；CoinGecko 低优先级）
         │     ├── analysis（EMA/RSI/MACD/ATR/支撑阻力）
         │     └── 多周期指标摘要 JSON
         │
@@ -350,7 +350,7 @@ type Snapshot struct {
 - 支持 `BTC`、`BTCUSDT`、`BTC/USDT`、`BTC-USD`；默认按 USDT 计价，统一映射为 Binance 交易对 `BTCUSDT`。
 - 通过 Binance `exchangeInfo` 校验交易对（缓存 24h），只接受 `status=TRADING` 的现货 USDT 对。
 - 排除杠杆代币（如 `BTCUP`、`BTCDOWN`）和非现货交易对，避免给出误导性观点。
-- 非 Binance 币种：尝试 CoinGecko 兜底（只支持部分周期，标记 `Partial`）；仍找不到则明确提示不支持，并给出相近代码，不调用 LLM。
+- 非 Binance 币种：当前明确提示不支持，不调用 LLM。CoinGecko 兜底为低优先级，暂不实现。
 - MVP 不需要股票/加密歧义处理；股票代码直接按“暂不支持”处理。
 
 ### 8.3 数据源与降级
@@ -724,7 +724,7 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 
 - 代码解析、Binance 行情适配器、缓存/重试、指标、支撑阻力、结构化提示词、JSON 校验/修复、观点卡片。
 - 验收：`BTC`、`ETH`、`SOL`、`BNB` 均能输出完整观点；数据时间戳正确；非 Binance 币种有明确提示；行情失败不编造。
-- 实际状态：staging 已用 `gpt-5-mini` 对 BTC/SOL/BNB 完成分析，耗时约 17–23 秒，无错误；`MAX_OUTPUT_TOKENS=4000` 避免 reasoning tokens 截断。CoinGecko 兜底和熔断器留到 P1。
+- 实际状态：staging 已用 `gpt-5-mini` 对 BTC/SOL/BNB 完成分析，耗时约 17–23 秒，无错误；`MAX_OUTPUT_TOKENS=4000` 避免 reasoning tokens 截断。熔断器留到 P1；CoinGecko 兜底为低优先级，暂不实现。
 
 ### Phase 4：会话与限流（已完成，2026-11-02）
 
@@ -737,7 +737,7 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 - 全量测试、race、安全自查（重点：自定义 `base_url` 的 SSRF、Key 泄漏）、备份/恢复、部署文档、真实环境 smoke、日志脱敏复查。
 - 甲骨文 VPS 上线：确认架构与镜像匹配、Security List/NSG 只开 SSH、VPS 能访问 Binance/OpenAI、NTP 正常；先部署 staging bot 冒烟，再切 prod；备份同步到 VPS 外。
 - 验收：`go test -race ./...` 通过；Docker 重启后数据完整；备份可恢复；无交易入口；私网/元数据地址不可达；staging 与 prod 互不影响。
-- 实际状态：新增 `guanlanai backup`（`VACUUM INTO`）并已在 staging 生成可读取的备份；观点 summary/reasons/risks 增加长度上限，避免 Telegram 4096 截断；备份、恢复、回滚写入 `docs/OPERATIONS.md`。CoinGecko 兜底和熔断器仍为 P1。
+- 实际状态：新增 `guanlanai backup`（`VACUUM INTO`）并已在 staging 生成可读取的备份；观点 summary/reasons/risks 增加长度上限，避免 Telegram 4096 截断；备份、恢复、回滚写入 `docs/OPERATIONS.md`。熔断器仍为 P1；CoinGecko 兜底为低优先级，暂不实现。
 
 **总计约 10–15 个开发日（2–3 周）**，建议预留 20% buffer。相比股票+加密双市场，加密单市场大约省 1–2 天。
 
@@ -768,7 +768,7 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 
 | 风险 | 影响 | 应对 |
 | --- | --- | --- |
-| Binance 地区限制/接口变更 | 加密行情不可用 | 部署前在 VPS 上验证可达性；`data-api.binance.vision` + CoinGecko 兜底，适配器隔离 |
+| Binance 地区限制/接口变更 | 加密行情不可用 | 部署前在 VPS 上验证可达性；`data-api.binance.vision` + 备用地址，适配器隔离；CoinGecko 低优先级 |
 | Oracle 区域限制 OpenAI/Binance | 核心依赖不可用 | 当前 iad 实测 OpenAI 可达、`api.binance.com` 451；默认 vision，部署前复测 |
 | VPS 架构与镜像不匹配 | 容器无法启动 | 构建 amd64/arm64 多架构镜像，或按 `uname -m` 在 VPS 构建 |
 | 单 VPS 故障/免费额度限制 | 生产+测试同时不可用 | 离线备份、恢复演练、资源限制和监控；接受单点风险 |

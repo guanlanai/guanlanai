@@ -80,15 +80,18 @@ sudo docker compose exec -T bot guanlanai backup
 sudo docker compose exec -T bot guanlanai backup -db /data/guanlanai.db -out /data/backups
 ```
 
-宿主机 cron 示例：
+每日备份脚本已安装：
 
-```cron
-0 3 * * * cd /opt/guanlanai/prod && /usr/bin/docker compose exec -T bot guanlanai backup >> /var/log/guanlanai-backup.log 2>&1
+```text
+/opt/guanlanai/backup.sh
+cron: 15 3 * * * /opt/guanlanai/backup.sh >> /opt/guanlanai/backup.log 2>&1
 ```
+
+脚本会依次备份 prod/staging，保留 14 天，并用 `flock` 防止重叠执行。脚本源码在 `deploy/backup.sh`。
 
 - 备份文件权限为 `0600`。
 - 生产/测试分开备份；至少定期把备份拉到 VPS 外。
-- 建议保留 7–14 天，并定期做恢复演练。
+- 建议定期做恢复演练。
 
 ## 恢复
 
