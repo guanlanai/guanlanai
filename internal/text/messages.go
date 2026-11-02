@@ -12,9 +12,9 @@ const disclaimer = "⚠️ 仅供参考，不构成投资建议。"
 // Welcome 是 /start 的欢迎语。
 func Welcome() string {
 	return `<b>观澜 · GuanLanAI</b>
-Telegram 加密货币交易分析助手（Phase 2）
+Telegram 加密货币交易分析助手（Phase 3）
 
-我可以根据币种代码给出结构化交易观点。当前已接入 Telegram 和用户 Key 配置；行情与 LLM 分析会在后续阶段接入。
+我可以根据币种代码给出结构化交易观点。当前已接入 Telegram、用户 Key、Binance 行情和 LLM 分析。
 
 常用命令：
 /start - 欢迎与说明
@@ -25,7 +25,7 @@ Telegram 加密货币交易分析助手（Phase 2）
 /mode - 切换短线/波段
 /status - 运行状态
 /reset - 清空当前会话
-/analyze BTC - 分析币种（Phase 3 接入）
+/analyze BTC - 分析币种
 
 首次使用请先发送 /key 配置 API Key。
 
@@ -74,7 +74,7 @@ API Key：<code>%s</code>
 Endpoint：<code>%s</code>
 
 Telegram：已连接
-行情：Phase 3 接入
+行情：已接入
 会话：Phase 4 接入
 
 %s`,
@@ -199,15 +199,31 @@ func Reset() string {
 	return "已清空当前会话（Phase 1 占位；Phase 4 接入真实上下文）。"
 }
 
-// Phase1 表示 Telegram 链路已通，但分析尚未接入。
-func Phase1(symbol string) string {
-	return fmt.Sprintf("已收到 <code>%s</code>。Telegram 链路正常；行情与交易观点将在 Phase 3 接入。\n\n%s",
-		html.EscapeString(symbol), disclaimer)
-}
-
 // NeedSymbol 提示用户发送币种代码。
 func NeedSymbol() string {
 	return "请发送币种代码，例如 <code>BTC</code> 或 <code>ETH</code>。"
+}
+
+// NeedModel 提示先选择模型。
+func NeedModel() string {
+	return "请先使用 /model 选择一个可用模型。"
+}
+
+// Analyzing 表示正在拉取行情并分析。
+func Analyzing(symbol, mode string) string {
+	return fmt.Sprintf("正在分析 <code>%s</code>（%s）…", html.EscapeString(symbol), modeLabel(mode))
+}
+
+// AnalysisError 返回用户可读的分析失败原因。
+func AnalysisError(reason string) string {
+	return "分析失败：" + html.EscapeString(reason)
+}
+
+func modeLabel(mode string) string {
+	if mode == "short" {
+		return "短线"
+	}
+	return "波段"
 }
 
 // Unsupported 提示当前不支持的内容。

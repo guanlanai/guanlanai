@@ -10,7 +10,9 @@ Phase 0 已完成：Go 骨架、环境配置、SQLite 迁移、`/healthz` / `/re
 
 Phase 1 已部署到生产和测试环境：Telegram long polling、私聊限制、per-chat 串行队列和基础命令。
 
-Phase 2 已部署到生产和测试环境：`/key`、AES-256-GCM 加密存储、收到 Key 后删除消息、`/baseurl` 兼容代理、`/model`、`/mode` 和 SSRF 防护。行情和 LLM 分析尚未接入。
+Phase 2 已部署到生产和测试环境：`/key`、AES-256-GCM 加密存储、收到 Key 后删除消息、`/baseurl` 兼容代理、`/model`、`/mode` 和 SSRF 防护。
+
+Phase 3 已部署：Binance USDT 现货行情、多周期技术指标、支撑阻力，以及 `gpt-5-mini` 结构化观点卡片。staging 已验证 BTC/SOL/BNB，生产已切换。
 
 ## 开发
 

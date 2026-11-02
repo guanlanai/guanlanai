@@ -481,7 +481,7 @@ type Request struct {
 
 - 系统提示词中文，固定版本号，写入日志便于回溯。
 - 明确：不保证收益、不推荐杠杆/满仓、不提供仓位大小（除非用户提供风险偏好）、必须给失效条件。
-- `temperature=0.2`，`max_completion_tokens≈1200`，上下文上限 6k tokens。
+- `temperature=0.2`（`gpt-5`/o 系列推理模型不传 temperature），`max_completion_tokens=4000`（包含 reasoning tokens），上下文上限 6k tokens。
 - 模型 allowlist 由 `MODEL_ALLOWLIST` 配置；`/model` 优先展示 endpoint 的 `/models`，代理用户可额外手动输入模型名。
 - `STRICT_MODEL_LIST=true`（默认）时，模型必须出现在 endpoint 的 `/models` 返回列表中；仅当代理不支持 `/models` 时设为 false 以允许手动填写。
 - 默认模型选便宜的小模型；调用前检查用户 Key 在该 endpoint 是否有权限，失败则回退默认模型或提示换模型。
@@ -585,7 +585,7 @@ TELEGRAM_MAX_CONCURRENCY=32
 LLM_MAX_CONCURRENCY=16
 MARKET_MAX_CONCURRENCY=8
 MAX_PROMPT_TOKENS=6000
-MAX_OUTPUT_TOKENS=1200
+MAX_OUTPUT_TOKENS=4000
 GLOBAL_DAILY_LLM_TOKENS=2000000
 TRADING_ENABLED=false
 ```
@@ -619,7 +619,7 @@ TRADING_ENABLED=false
 
 - Oracle `VM.Standard.A1.Flex`，region `iad`（US-Ashburn），Ubuntu 26.04，`aarch64`，1 OCPU，5.8GB RAM，45GB 磁盘（41GB 可用），无 swap。
 - Docker 29.1.3 / Compose 2.40.3 已安装，`ubuntu` 已加入 `docker` 组；镜像 `guanlanai:phase0`、`phase1`、`phase2` 已加载。
-- `guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，均已切 `phase2`；容器用户 `PUID/PGID=1001`，无宿主端口发布，SQLite 文件权限 0600。
+- `guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，均已切 `phase3`；容器用户 `PUID/PGID=1001`，无宿主端口发布，SQLite 文件权限 0600。
 - `api.binance.com` 返回 451，`data-api.binance.vision` 返回 200，CoinGecko 200，OpenAI 401（网络可达）。
 - 22 端口用于 SSH；111（rpcbind）在监听，若无 NFS 需求建议 `systemctl disable --now rpcbind`，并确认 Security List 未放行。
 - 1 OCPU 上编译 Go 会很慢；优先本机/CI 构建 `linux/arm64` 镜像后推送或传输，避免在 VPS 上反复编译。
@@ -720,10 +720,11 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 - 验收：Key 不以明文出现在 DB/日志；删除消息成功；错误 Key 有明确提示；自定义代理可用；私网/元数据地址被拒绝；重启后 Key 仍可用。
 - 实际状态：`internal/secrets`、`internal/netguard`、`internal/llm/openai`、`internal/user`、用户 SQLite repository 和 `/key`/`/baseurl`/`/model`/`/mode`/`/status` 已实现。staging 与 prod 均已用真实 Key 验证：Key 为 BLOB 密文、无 `sk-` 明文、`key_status=valid`；`/model` 与 `/mode` 已生效。
 
-### Phase 3：行情与观点（2–3 天）
+### Phase 3：行情与观点（已实现，staging 验证通过，prod 已部署）
 
-- 代码解析、Binance/CoinGecko 适配器、缓存/重试/熔断、指标、支撑阻力、结构化提示词、JSON 校验/修复、观点卡片。
+- 代码解析、Binance 行情适配器、缓存/重试、指标、支撑阻力、结构化提示词、JSON 校验/修复、观点卡片。
 - 验收：`BTC`、`ETH`、`SOL`、`BNB` 均能输出完整观点；数据时间戳正确；非 Binance 币种有明确提示；行情失败不编造。
+- 实际状态：staging 已用 `gpt-5-mini` 对 BTC/SOL/BNB 完成分析，耗时约 17–23 秒，无错误；`MAX_OUTPUT_TOKENS=4000` 避免 reasoning tokens 截断。CoinGecko 兜底和熔断器留到 P1。
 
 ### Phase 4：会话与限流（2–3 天）
 

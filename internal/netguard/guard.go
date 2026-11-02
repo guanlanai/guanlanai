@@ -136,6 +136,9 @@ func isDeniedIP(ip net.IP) bool {
 // NewHTTPClient 创建带 SSRF 防护的 HTTP 客户端。
 // 它在连接时重新解析并校验 IP，避免 DNS rebinding。
 func NewHTTPClient(policy Policy, timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
 	dialer := &net.Dialer{
 		Timeout:   5 * time.Second,
 		KeepAlive: 30 * time.Second,
@@ -179,7 +182,7 @@ func NewHTTPClient(policy Policy, timeout time.Duration) *http.Client {
 			return nil, lastErr
 		},
 		TLSHandshakeTimeout:   5 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
+		ResponseHeaderTimeout: timeout,
 		ExpectContinueTimeout: time.Second,
 		ForceAttemptHTTP2:     true,
 	}

@@ -9,6 +9,8 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
+	"github.com/guanlanai/guanlanai/internal/agent"
+	"github.com/guanlanai/guanlanai/internal/analysis"
 	"github.com/guanlanai/guanlanai/internal/config"
 	"github.com/guanlanai/guanlanai/internal/llm"
 	"github.com/guanlanai/guanlanai/internal/netguard"
@@ -312,6 +314,67 @@ func TestNonStrictAllowsManualModel(t *testing.T) {
 
 	if store.usr.Model != "m2" {
 		t.Fatalf("非严格模式应允许手动模型: %q", store.usr.Model)
+	}
+}
+
+type fakeAnalyzer struct {
+	calls  int
+	query  string
+	mode   string
+	result *agent.Result
+	err    error
+}
+
+func (f *fakeAnalyzer) Analyze(_ context.Context, _ *user.User, _, query, mode string) (*agent.Result, error) {
+	f.calls++
+	f.query = query
+	f.mode = mode
+	return f.result, f.err
+}
+
+func TestAnalyzeFlow(t *testing.T) {
+	service, sender, store, _, _ := newPhase2Service()
+	ctx := context.Background()
+	store.usr = user.User{
+		TelegramUserID: 1,
+		KeyCiphertext:  []byte("enc:sk-test-key"),
+		KeyNonce:       []byte("nonce"),
+		KeyStatus:      "valid",
+		APIBaseURL:     "https://api.openai.com/v1",
+		Model:          "gpt-5-mini",
+		Mode:           "swing",
+	}
+	analyzer := &fakeAnalyzer{result: &agent.Result{
+		Report: &analysis.Report{
+			Symbol: "BTC", Pair: "BTCUSDT", Quote: "USDT", Market: "crypto",
+			Mode: "swing", Price: 100, ChangePct: 1.2, Source: "test",
+			AsOf: time.Now().UTC(),
+		},
+		Opinion: &agent.Opinion{
+			Direction: "bullish", Confidence: "medium", Summary: "test",
+			Reasons: []string{"r"}, Risks: []string{"x"},
+			KeyLevels: agent.KeyLevels{Support: []float64{90}, Resistance: []float64{110}},
+		},
+	}}
+	service.analyzer = analyzer
+
+	service.handle(ctx, privateUpdate("/analyze BTC"))
+
+	if analyzer.calls != 1 || analyzer.query != "BTC" || analyzer.mode != "swing" {
+		t.Fatalf("analyzer = %#v", analyzer)
+	}
+	if !strings.Contains(sender.last().Text, "BTC/USDT") || !strings.Contains(sender.last().Text, "偏多") {
+		t.Fatalf("观点卡片 = %q", sender.last().Text)
+	}
+}
+
+func TestAnalyzeFlowRequiresKey(t *testing.T) {
+	service, sender, _, _, _ := newPhase2Service()
+
+	service.handle(context.Background(), privateUpdate("/analyze BTC"))
+
+	if !strings.Contains(sender.last().Text, "/key") {
+		t.Fatalf("回复 = %q", sender.last().Text)
 	}
 }
 

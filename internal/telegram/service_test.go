@@ -87,7 +87,7 @@ func TestHandleStart(t *testing.T) {
 	}
 }
 
-func TestHandleSymbol(t *testing.T) {
+func TestHandleSymbolWithoutKey(t *testing.T) {
 	sender := &fakeSender{}
 	service := newTestService(sender)
 
@@ -96,8 +96,8 @@ func TestHandleSymbol(t *testing.T) {
 	if sender.count() != 1 {
 		t.Fatalf("消息数 = %d, want 1", sender.count())
 	}
-	if !strings.Contains(sender.last().Text, "BTC") {
-		t.Fatalf("回复缺少币种: %q", sender.last().Text)
+	if !strings.Contains(sender.last().Text, "/key") {
+		t.Fatalf("未配置 Key 时应提示 /key: %q", sender.last().Text)
 	}
 }
 

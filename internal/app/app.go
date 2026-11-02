@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/guanlanai/guanlanai/internal/agent"
 	"github.com/guanlanai/guanlanai/internal/config"
 	"github.com/guanlanai/guanlanai/internal/health"
 	"github.com/guanlanai/guanlanai/internal/llm/openai"
+	"github.com/guanlanai/guanlanai/internal/market/binance"
 	"github.com/guanlanai/guanlanai/internal/netguard"
 	"github.com/guanlanai/guanlanai/internal/secrets"
 	"github.com/guanlanai/guanlanai/internal/storage/sqlite"
@@ -58,9 +60,20 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		cfg.ModelAllowlist,
 	)
 
+	marketClient := binance.NewClient(cfg.BinanceBaseURL, cfg.BinanceFallbackBaseURL, 10*time.Second)
+	completer := openai.NewCompleter(guard, 60*time.Second)
+	analyzer := agent.New(
+		marketClient,
+		marketClient,
+		completer,
+		cfg.DefaultModel,
+		cfg.MaxOutputTokens,
+		logger,
+	)
+
 	var telegramErr chan error
 	if cfg.TelegramToken != "" {
-		tg, err := telegram.New(cfg, logger, store, keyCipher, validator, guard)
+		tg, err := telegram.New(cfg, logger, store, keyCipher, validator, guard, analyzer)
 		if err != nil {
 			return fmt.Errorf("初始化 Telegram 服务: %w", err)
 		}

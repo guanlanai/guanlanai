@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"regexp"
 	"strings"
@@ -14,9 +15,11 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
+	"github.com/guanlanai/guanlanai/internal/agent"
 	"github.com/guanlanai/guanlanai/internal/config"
 	"github.com/guanlanai/guanlanai/internal/llm"
 	"github.com/guanlanai/guanlanai/internal/logging"
+	"github.com/guanlanai/guanlanai/internal/market"
 	"github.com/guanlanai/guanlanai/internal/netguard"
 	"github.com/guanlanai/guanlanai/internal/render"
 	"github.com/guanlanai/guanlanai/internal/secrets"
@@ -30,6 +33,11 @@ var modelNamePattern = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,100}$`)
 // MessageDeleter 用于删除包含 Key 的消息，方便测试时替换。
 type MessageDeleter interface {
 	DeleteMessage(ctx context.Context, params *bot.DeleteMessageParams) (bool, error)
+}
+
+// Analyzer 生成一次完整的行情与观点分析。
+type Analyzer interface {
+	Analyze(ctx context.Context, usr *user.User, apiKey, query, mode string) (*agent.Result, error)
 }
 
 // Service 负责 Telegram 长轮询、命令路由、用户配置和消息发送。
@@ -46,6 +54,7 @@ type Service struct {
 	cipher    secrets.Cipher
 	validator llm.Validator
 	guard     netguard.Policy
+	analyzer  Analyzer
 
 	pendingMu sync.Mutex
 	pending   map[int64]pendingState
@@ -71,6 +80,7 @@ func New(
 	cipher secrets.Cipher,
 	validator llm.Validator,
 	guard netguard.Policy,
+	analyzer Analyzer,
 ) (*Service, error) {
 	if strings.TrimSpace(cfg.TelegramToken) == "" {
 		return nil, errors.New("TELEGRAM_BOT_TOKEN 不能为空")
@@ -84,6 +94,7 @@ func New(
 		cipher:    cipher,
 		validator: validator,
 		guard:     guard,
+		analyzer:  analyzer,
 		pending:   make(map[int64]pendingState),
 	}
 
@@ -223,16 +234,64 @@ func (s *Service) handle(ctx context.Context, update *models.Update) {
 			s.send(ctx, msg.Chat.ID, text.NeedSymbol())
 			return
 		}
-		s.send(ctx, msg.Chat.ID, text.Phase1(args))
+		s.handleAnalyze(ctx, msg.Chat.ID, usr, args)
 	case "":
 		if looksLikeSymbol(raw) {
-			s.send(ctx, msg.Chat.ID, text.Phase1(raw))
+			s.handleAnalyze(ctx, msg.Chat.ID, usr, raw)
 			return
 		}
 		s.send(ctx, msg.Chat.ID, text.Unsupported())
 	default:
 		s.send(ctx, msg.Chat.ID, text.UnknownCommand())
 	}
+}
+
+func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.User, query string) {
+	if !usr.HasKey() {
+		s.send(ctx, chatID, text.NeedKey())
+		return
+	}
+	if s.analyzer == nil {
+		s.send(ctx, chatID, text.Unavailable("行情分析"))
+		return
+	}
+
+	key, err := s.decryptKey(usr)
+	if err != nil {
+		s.send(ctx, chatID, text.KeyInvalid("无法解密已保存的 Key，请重新 /key"))
+		return
+	}
+
+	model := usr.Model
+	if model == "" {
+		model = s.cfg.DefaultModel
+	}
+	if model == "" {
+		s.send(ctx, chatID, text.NeedModel())
+		return
+	}
+
+	mode := usr.Mode
+	if mode == "" {
+		mode = s.cfg.DefaultMode
+	}
+	if mode != "short" && mode != "swing" {
+		mode = "swing"
+	}
+
+	s.send(ctx, chatID, text.Analyzing(query, mode))
+	result, err := s.analyzer.Analyze(ctx, usr, key, query, mode)
+	if err != nil {
+		s.logger.Error("分析失败",
+			"chat", logging.HashID(chatID),
+			"query", query,
+			"mode", mode,
+			"error", err,
+		)
+		s.send(ctx, chatID, text.AnalysisError(reason(err)))
+		return
+	}
+	s.send(ctx, chatID, render.OpinionCard(result.Report, result.Opinion))
 }
 
 func (s *Service) ensureUser(ctx context.Context, msg *models.Message) (*user.User, error) {
@@ -635,6 +694,14 @@ func reason(err error) string {
 		return "endpoint 不支持 /models，无法完成校验"
 	case errors.Is(err, llm.ErrValidationUnavailable):
 		return "暂时无法连接上游，请稍后再试"
+	case errors.Is(err, market.ErrSymbolNotFound):
+		return "找不到该交易对，或暂不支持（目前仅支持 Binance USDT 现货）"
+	case errors.Is(err, market.ErrDataUnavailable):
+		return "行情数据暂时不可用，请稍后再试"
+	case errors.Is(err, agent.ErrNoModel):
+		return "请先使用 /model 选择模型"
+	case errors.Is(err, agent.ErrInvalidOutput):
+		return "模型输出格式异常，请重试或换一个模型"
 	case errors.Is(err, netguard.ErrInsecureScheme):
 		return "必须使用 https"
 	case errors.Is(err, netguard.ErrPrivateAddress):
@@ -649,9 +716,14 @@ func reason(err error) string {
 		return "地址不能包含 query 或 fragment"
 	case errors.Is(err, netguard.ErrRedirect):
 		return "不允许重定向"
-	default:
-		return "请检查地址和 Key 是否正确"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "上游响应超时，请稍后再试"
 	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "上游响应超时，请稍后再试"
+	}
+	return "请检查地址和 Key 是否正确"
 }
 
 // parseCommand 解析 /cmd@BotName args 形式的文本。
