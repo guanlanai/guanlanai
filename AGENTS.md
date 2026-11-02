@@ -46,6 +46,7 @@ make docker            # 本机架构镜像
 - Phase 1 已部署到 prod/staging：镜像 `guanlanai:phase1`，`@GuanLanAI_bot` 和 `@ax_ha_1_bot` 均已连接。
 - Phase 2 已部署到 prod/staging：镜像 `guanlanai:phase2`，包含 Key 加密、`/key`、`/baseurl`、`/model`、`/mode`、SSRF 防护；两套环境均已用真实 Key 验证。
 - Phase 3 已部署到 prod/staging：镜像 `guanlanai:phase3`，Binance 行情 + 技术指标 + `gpt-5-mini` 结构化观点；staging 已验证 BTC/SOL/BNB，prod 已切换。
+- Phase 4 已部署到 prod/staging：镜像 `guanlanai:phase4`，会话上下文、追问、摘要裁剪、限流、usage 记录；staging 已验证，prod 已切换。
 - Oracle Security List/NSG 只开 SSH；不要暴露 8080，健康检查在容器内或用 `127.0.0.1`。
 - 测试 bot 可同机：独立 `.env`、Bot Token、`APP_MASTER_KEY`、SQLite、volume、compose project；不共享端口和密钥。
 - 镜像必须匹配 VPS 架构（Oracle Ampere 是 arm64）；优先构建 amd64/arm64 多架构镜像，或按 `uname -m` 在 VPS 构建。

@@ -12,6 +12,7 @@ import (
 	"github.com/guanlanai/guanlanai/internal/llm/openai"
 	"github.com/guanlanai/guanlanai/internal/market/binance"
 	"github.com/guanlanai/guanlanai/internal/netguard"
+	"github.com/guanlanai/guanlanai/internal/ratelimit"
 	"github.com/guanlanai/guanlanai/internal/secrets"
 	"github.com/guanlanai/guanlanai/internal/storage/sqlite"
 	"github.com/guanlanai/guanlanai/internal/telegram"
@@ -68,12 +69,15 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		completer,
 		cfg.DefaultModel,
 		cfg.MaxOutputTokens,
+		cfg.LLMMaxConcurrency,
 		logger,
 	)
+	limiter := ratelimit.New(cfg.AnalysisRatePerMin, cfg.AnalysisRatePerHour, cfg.ChatRatePerMin)
+	go cleanupLoop(ctx, store, limiter, cfg.DataRetentionDays, logger)
 
 	var telegramErr chan error
 	if cfg.TelegramToken != "" {
-		tg, err := telegram.New(cfg, logger, store, keyCipher, validator, guard, analyzer)
+		tg, err := telegram.New(cfg, logger, store, store, store, keyCipher, validator, guard, analyzer, limiter)
 		if err != nil {
 			return fmt.Errorf("初始化 Telegram 服务: %w", err)
 		}
@@ -127,4 +131,33 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 
 	return runErr
+}
+
+func cleanupLoop(ctx context.Context, store *sqlite.Store, limiter *ratelimit.Limiter, days int, logger *slog.Logger) {
+	if days <= 0 {
+		days = 30
+	}
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+
+	cleanup := func() {
+		before := time.Now().AddDate(0, 0, -days)
+		count, err := store.CleanupMessages(ctx, before)
+		if err != nil {
+			logger.Warn("清理过期消息失败", "error", err)
+		} else if count > 0 {
+			logger.Info("已清理过期消息", "count", count)
+		}
+		limiter.CleanupIdle(time.Now(), 24*time.Hour)
+	}
+	cleanup()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cleanup()
+		}
+	}
 }

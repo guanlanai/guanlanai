@@ -18,7 +18,7 @@
 
 - 生产容器：`guanlanai-prod-bot-1`
 - 测试容器：`guanlanai-staging-bot-1`
-- 镜像：staging 和 prod 当前均为 `guanlanai:phase3`
+- 镜像：staging 和 prod 当前均为 `guanlanai:phase4`
 - 容器用户：`PUID/PGID=1001`，与 `data/` 所有者一致
 - 不发布宿主端口；健康检查通过容器内 `wget` 访问 `/healthz`
 

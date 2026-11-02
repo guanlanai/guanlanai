@@ -34,10 +34,11 @@ func (s *Store) getByTelegramID(ctx context.Context, telegramUserID int64) (*use
 		model      sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
-SELECT telegram_user_id, username, key_ciphertext, key_nonce, key_version,
+SELECT id, telegram_user_id, username, key_ciphertext, key_nonce, key_version,
        key_status, api_base_url, model, mode, status
 FROM users
 WHERE telegram_user_id = ?`, telegramUserID).Scan(
+		&result.ID,
 		&result.TelegramUserID,
 		&username,
 		&ciphertext,

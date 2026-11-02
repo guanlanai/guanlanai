@@ -619,7 +619,7 @@ TRADING_ENABLED=false
 
 - Oracle `VM.Standard.A1.Flex`，region `iad`（US-Ashburn），Ubuntu 26.04，`aarch64`，1 OCPU，5.8GB RAM，45GB 磁盘（41GB 可用），无 swap。
 - Docker 29.1.3 / Compose 2.40.3 已安装，`ubuntu` 已加入 `docker` 组；镜像 `guanlanai:phase0`、`phase1`、`phase2` 已加载。
-- `guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，均已切 `phase3`；容器用户 `PUID/PGID=1001`，无宿主端口发布，SQLite 文件权限 0600。
+- `guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，均已切 `phase4`；容器用户 `PUID/PGID=1001`，无宿主端口发布，SQLite 文件权限 0600。
 - `api.binance.com` 返回 451，`data-api.binance.vision` 返回 200，CoinGecko 200，OpenAI 401（网络可达）。
 - 22 端口用于 SSH；111（rpcbind）在监听，若无 NFS 需求建议 `systemctl disable --now rpcbind`，并确认 Security List 未放行。
 - 1 OCPU 上编译 Go 会很慢；优先本机/CI 构建 `linux/arm64` 镜像后推送或传输，避免在 VPS 上反复编译。
@@ -726,10 +726,11 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 - 验收：`BTC`、`ETH`、`SOL`、`BNB` 均能输出完整观点；数据时间戳正确；非 Binance 币种有明确提示；行情失败不编造。
 - 实际状态：staging 已用 `gpt-5-mini` 对 BTC/SOL/BNB 完成分析，耗时约 17–23 秒，无错误；`MAX_OUTPUT_TOKENS=4000` 避免 reasoning tokens 截断。CoinGecko 兜底和熔断器留到 P1。
 
-### Phase 4：会话与限流（2–3 天）
+### Phase 4：会话与限流（已完成，2026-11-02）
 
 - 追问 Agent、上下文预算、摘要、`/reset`、每用户限流、全局并发、usage 记录、错误 UX。
 - 验收：追问能引用上一次观点；超限有提示；`/reset` 后不串上下文；并发压测不崩。
+- 实际状态：staging 已验证分析→追问→`/status`→`/reset`→无上下文追问的完整流程；usage 记录 `analysis` 1 次、`chat` 2 次，无错误。生产已切 `phase4`，`/reset` 会清空会话和摘要。
 
 ### Phase 5：加固与上线（2–3 天）
 

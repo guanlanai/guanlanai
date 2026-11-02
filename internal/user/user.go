@@ -4,6 +4,7 @@ import "context"
 
 // User 是 Telegram 用户及其分析配置。
 type User struct {
+	ID             int64
 	TelegramUserID int64
 	Username       string
 	KeyCiphertext  []byte

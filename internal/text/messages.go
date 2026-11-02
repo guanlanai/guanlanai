@@ -12,9 +12,9 @@ const disclaimer = "⚠️ 仅供参考，不构成投资建议。"
 // Welcome 是 /start 的欢迎语。
 func Welcome() string {
 	return `<b>观澜 · GuanLanAI</b>
-Telegram 加密货币交易分析助手（Phase 3）
+Telegram 加密货币交易分析助手（Phase 4）
 
-我可以根据币种代码给出结构化交易观点。当前已接入 Telegram、用户 Key、Binance 行情和 LLM 分析。
+我可以根据币种代码给出结构化交易观点，并在分析后继续追问。当前已接入 Telegram、用户 Key、Binance 行情、LLM 分析和会话记忆。
 
 常用命令：
 /start - 欢迎与说明
@@ -51,6 +51,7 @@ func Help() string {
 /model - 查看或切换模型
 /mode - 查看或切换短线/波段
 
+分析后可以直接追问，例如“那止损呢？”、“如果跌破支撑怎么办？”。
 Key 配置流程：/key → 下一条消息发送 Key → Bot 删除该消息并加密保存。
 自定义代理必须是公网 HTTPS 地址，且包含 /v1 等路径。
 
@@ -75,7 +76,7 @@ Endpoint：<code>%s</code>
 
 Telegram：已连接
 行情：已接入
-会话：Phase 4 接入
+会话：已接入
 
 %s`,
 		html.EscapeString(instance),
@@ -194,9 +195,28 @@ func GenericError() string {
 	return "操作失败，请稍后再试。"
 }
 
-// Reset 是 /reset 的占位回复。
+// Reset 是 /reset 的回复。
 func Reset() string {
-	return "已清空当前会话（Phase 1 占位；Phase 4 接入真实上下文）。"
+	return "已清空当前会话上下文和摘要。"
+}
+
+// FollowUpNeedAnalysis 提示先做一次分析。
+func FollowUpNeedAnalysis() string {
+	return "当前没有可追问的分析。请先发送币种代码，例如 <code>BTC</code>。"
+}
+
+// RateLimited 提示限流。
+func RateLimited(retryAfter time.Duration) string {
+	seconds := int(retryAfter.Seconds())
+	if seconds < 1 {
+		seconds = 1
+	}
+	return fmt.Sprintf("请求过于频繁，请 %d 秒后再试。", seconds)
+}
+
+// Thinking 提示正在处理追问。
+func Thinking() string {
+	return "正在整理上下文并回答…"
 }
 
 // NeedSymbol 提示用户发送币种代码。

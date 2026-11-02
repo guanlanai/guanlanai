@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -21,9 +23,12 @@ import (
 	"github.com/guanlanai/guanlanai/internal/logging"
 	"github.com/guanlanai/guanlanai/internal/market"
 	"github.com/guanlanai/guanlanai/internal/netguard"
+	"github.com/guanlanai/guanlanai/internal/ratelimit"
 	"github.com/guanlanai/guanlanai/internal/render"
 	"github.com/guanlanai/guanlanai/internal/secrets"
+	"github.com/guanlanai/guanlanai/internal/session"
 	"github.com/guanlanai/guanlanai/internal/text"
+	"github.com/guanlanai/guanlanai/internal/usage"
 	"github.com/guanlanai/guanlanai/internal/user"
 	"github.com/guanlanai/guanlanai/internal/version"
 )
@@ -35,9 +40,11 @@ type MessageDeleter interface {
 	DeleteMessage(ctx context.Context, params *bot.DeleteMessageParams) (bool, error)
 }
 
-// Analyzer 生成一次完整的行情与观点分析。
+// Analyzer 生成行情观点、回答追问并压缩上下文。
 type Analyzer interface {
 	Analyze(ctx context.Context, usr *user.User, apiKey, query, mode string) (*agent.Result, error)
+	Chat(ctx context.Context, usr *user.User, apiKey, question, contextText string) (*agent.ChatResult, error)
+	Summarize(ctx context.Context, usr *user.User, apiKey, existingSummary string, messages []session.Message) (*agent.ChatResult, error)
 }
 
 // Service 负责 Telegram 长轮询、命令路由、用户配置和消息发送。
@@ -51,10 +58,13 @@ type Service struct {
 	started    time.Time
 
 	store     user.Store
+	sessions  session.Store
+	usage     usage.Store
 	cipher    secrets.Cipher
 	validator llm.Validator
 	guard     netguard.Policy
 	analyzer  Analyzer
+	limiter   *ratelimit.Limiter
 
 	pendingMu sync.Mutex
 	pending   map[int64]pendingState
@@ -77,10 +87,13 @@ func New(
 	cfg config.Config,
 	logger *slog.Logger,
 	store user.Store,
+	sessions session.Store,
+	usageStore usage.Store,
 	cipher secrets.Cipher,
 	validator llm.Validator,
 	guard netguard.Policy,
 	analyzer Analyzer,
+	limiter *ratelimit.Limiter,
 ) (*Service, error) {
 	if strings.TrimSpace(cfg.TelegramToken) == "" {
 		return nil, errors.New("TELEGRAM_BOT_TOKEN 不能为空")
@@ -91,10 +104,13 @@ func New(
 		logger:    logger,
 		started:   time.Now(),
 		store:     store,
+		sessions:  sessions,
+		usage:     usageStore,
 		cipher:    cipher,
 		validator: validator,
 		guard:     guard,
 		analyzer:  analyzer,
+		limiter:   limiter,
 		pending:   make(map[int64]pendingState),
 	}
 
@@ -201,6 +217,11 @@ func (s *Service) handle(ctx context.Context, update *models.Update) {
 		"text_len", len([]rune(raw)),
 	)
 
+	sess, err := s.ensureSession(ctx, usr, msg.Chat.ID)
+	if err != nil {
+		s.logger.Warn("读取会话失败，继续无会话处理", "chat", logging.HashID(msg.Chat.ID), "error", err)
+	}
+
 	switch command {
 	case "/start":
 		message := text.Welcome()
@@ -211,9 +232,9 @@ func (s *Service) handle(ctx context.Context, update *models.Update) {
 	case "/help":
 		s.send(ctx, msg.Chat.ID, text.Help())
 	case "/status":
-		s.handleStatus(ctx, msg.Chat.ID, usr)
+		s.handleStatus(ctx, msg.Chat.ID, usr, sess)
 	case "/reset":
-		s.send(ctx, msg.Chat.ID, text.Reset())
+		s.handleReset(ctx, msg.Chat.ID, usr)
 	case "/cancel":
 		s.send(ctx, msg.Chat.ID, "已取消待处理操作。")
 	case "/key":
@@ -234,19 +255,19 @@ func (s *Service) handle(ctx context.Context, update *models.Update) {
 			s.send(ctx, msg.Chat.ID, text.NeedSymbol())
 			return
 		}
-		s.handleAnalyze(ctx, msg.Chat.ID, usr, args)
+		s.handleAnalyze(ctx, msg.Chat.ID, usr, sess, args)
 	case "":
-		if looksLikeSymbol(raw) {
-			s.handleAnalyze(ctx, msg.Chat.ID, usr, raw)
+		if looksLikeSymbol(raw) && !s.isFollowUp(raw, sess) {
+			s.handleAnalyze(ctx, msg.Chat.ID, usr, sess, raw)
 			return
 		}
-		s.send(ctx, msg.Chat.ID, text.Unsupported())
+		s.handleFollowUp(ctx, msg.Chat.ID, usr, sess, raw)
 	default:
 		s.send(ctx, msg.Chat.ID, text.UnknownCommand())
 	}
 }
 
-func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.User, query string) {
+func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.User, sess *session.Session, query string) {
 	if !usr.HasKey() {
 		s.send(ctx, chatID, text.NeedKey())
 		return
@@ -254,6 +275,20 @@ func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.Use
 	if s.analyzer == nil {
 		s.send(ctx, chatID, text.Unavailable("行情分析"))
 		return
+	}
+	if s.limiter != nil {
+		if ok, retry := s.limiter.AllowAnalysis(usr.TelegramUserID); !ok {
+			s.send(ctx, chatID, text.RateLimited(retry))
+			return
+		}
+	}
+
+	if sess == nil {
+		var err error
+		sess, err = s.ensureSession(ctx, usr, chatID)
+		if err != nil {
+			s.logger.Warn("读取会话失败，分析继续但不保存上下文", "chat", logging.HashID(chatID), "error", err)
+		}
 	}
 
 	key, err := s.decryptKey(usr)
@@ -279,9 +314,14 @@ func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.Use
 		mode = "swing"
 	}
 
+	started := time.Now()
+	if sess != nil {
+		_ = s.sessions.AppendMessage(ctx, sess.ID, "user", "分析 "+query+"（"+mode+"）", estimateTokens(query))
+	}
 	s.send(ctx, chatID, text.Analyzing(query, mode))
 	result, err := s.analyzer.Analyze(ctx, usr, key, query, mode)
 	if err != nil {
+		s.recordUsage(ctx, usr, "analysis", model, nil, time.Since(started), "error")
 		s.logger.Error("分析失败",
 			"chat", logging.HashID(chatID),
 			"query", query,
@@ -291,7 +331,198 @@ func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.Use
 		s.send(ctx, chatID, text.AnalysisError(reason(err)))
 		return
 	}
-	s.send(ctx, chatID, render.OpinionCard(result.Report, result.Opinion))
+
+	card := render.OpinionCard(result.Report, result.Opinion)
+	if sess != nil {
+		payload, marshalErr := json.Marshal(map[string]any{
+			"report":  result.Report,
+			"opinion": result.Opinion,
+		})
+		if marshalErr == nil {
+			if _, saveErr := s.sessions.SaveAnalysis(ctx, sess.ID, result.Report.Symbol, result.Report.Market, string(payload)); saveErr != nil {
+				s.logger.Warn("保存分析上下文失败", "chat", logging.HashID(chatID), "error", saveErr)
+			}
+		}
+		_ = s.sessions.AppendMessage(ctx, sess.ID, "assistant", card, estimateTokens(card))
+	}
+	s.recordUsage(ctx, usr, "analysis", model, result.Usage, time.Since(started), "ok")
+	s.send(ctx, chatID, card)
+}
+
+func (s *Service) handleFollowUp(ctx context.Context, chatID int64, usr *user.User, sess *session.Session, question string) {
+	if sess == nil || sess.LastAnalysisJSON == "" {
+		s.send(ctx, chatID, text.FollowUpNeedAnalysis())
+		return
+	}
+	if !usr.HasKey() {
+		s.send(ctx, chatID, text.NeedKey())
+		return
+	}
+	if s.analyzer == nil {
+		s.send(ctx, chatID, text.Unavailable("追问"))
+		return
+	}
+	if s.limiter != nil {
+		if ok, retry := s.limiter.AllowChat(usr.TelegramUserID); !ok {
+			s.send(ctx, chatID, text.RateLimited(retry))
+			return
+		}
+	}
+
+	key, err := s.decryptKey(usr)
+	if err != nil {
+		s.send(ctx, chatID, text.KeyInvalid("无法解密已保存的 Key，请重新 /key"))
+		return
+	}
+	model := usr.Model
+	if model == "" {
+		model = s.cfg.DefaultModel
+	}
+	if model == "" {
+		s.send(ctx, chatID, text.NeedModel())
+		return
+	}
+
+	messages, err := s.sessions.RecentMessages(ctx, sess.ID, 20)
+	if err != nil {
+		s.logger.Warn("读取会话消息失败", "chat", logging.HashID(chatID), "error", err)
+		messages = nil
+	}
+
+	if len(messages) > 12 || estimateMessages(messages) > 3000 {
+		cut := len(messages) - 8
+		if cut > 0 {
+			summaryResult, summaryErr := s.analyzer.Summarize(ctx, usr, key, sess.Summary, messages[:cut])
+			if summaryErr != nil {
+				s.logger.Warn("压缩会话失败，仅使用最近消息", "chat", logging.HashID(chatID), "error", summaryErr)
+				if len(messages) > 8 {
+					messages = messages[len(messages)-8:]
+				}
+			} else {
+				s.recordUsage(ctx, usr, "summarize", model, summaryResult.Usage, 0, "ok")
+				if err := s.sessions.UpdateSummary(ctx, sess.ID, summaryResult.Content, estimateTokens(summaryResult.Content)); err != nil {
+					s.logger.Warn("保存会话摘要失败", "chat", logging.HashID(chatID), "error", err)
+				} else {
+					sess.Summary = summaryResult.Content
+				}
+				if err := s.sessions.TrimMessages(ctx, sess.ID, 8); err != nil {
+					s.logger.Warn("裁剪会话消息失败", "chat", logging.HashID(chatID), "error", err)
+				}
+				if recent, recentErr := s.sessions.RecentMessages(ctx, sess.ID, 8); recentErr == nil {
+					messages = recent
+				}
+			}
+		}
+	}
+
+	var contextBuilder strings.Builder
+	if sess.Summary != "" {
+		contextBuilder.WriteString("会话摘要：\n")
+		contextBuilder.WriteString(sess.Summary)
+		contextBuilder.WriteString("\n\n")
+	}
+	contextBuilder.WriteString("最近一次分析：\n")
+	contextBuilder.WriteString(sess.LastAnalysisJSON)
+	contextBuilder.WriteString("\n\n")
+	if len(messages) > 0 {
+		contextBuilder.WriteString("最近对话：\n")
+		for _, message := range messages {
+			contextBuilder.WriteString(message.Role)
+			contextBuilder.WriteString(": ")
+			contextBuilder.WriteString(message.Content)
+			contextBuilder.WriteString("\n")
+		}
+	}
+
+	s.send(ctx, chatID, text.Thinking())
+	started := time.Now()
+	result, err := s.analyzer.Chat(ctx, usr, key, question, contextBuilder.String())
+	if err != nil {
+		s.recordUsage(ctx, usr, "chat", model, nil, time.Since(started), "error")
+		s.logger.Error("追问失败", "chat", logging.HashID(chatID), "error", err)
+		s.send(ctx, chatID, text.AnalysisError(reason(err)))
+		return
+	}
+
+	_ = s.sessions.AppendMessage(ctx, sess.ID, "user", question, estimateTokens(question))
+	_ = s.sessions.AppendMessage(ctx, sess.ID, "assistant", result.Content, estimateTokens(result.Content))
+	s.recordUsage(ctx, usr, "chat", model, result.Usage, time.Since(started), "ok")
+	s.send(ctx, chatID, render.EscapeHTML(result.Content))
+}
+
+func (s *Service) handleReset(ctx context.Context, chatID int64, usr *user.User) {
+	if s.sessions != nil && usr.ID != 0 {
+		if _, err := s.sessions.Reset(ctx, usr.ID, chatID); err != nil {
+			s.logger.Warn("重置会话失败", "chat", logging.HashID(chatID), "error", err)
+		}
+	}
+	s.send(ctx, chatID, text.Reset())
+}
+
+func (s *Service) ensureSession(ctx context.Context, usr *user.User, chatID int64) (*session.Session, error) {
+	if s.sessions == nil {
+		return nil, nil
+	}
+	if usr == nil || usr.ID == 0 {
+		return nil, errors.New("用户尚未持久化")
+	}
+	return s.sessions.GetOrCreateSession(ctx, usr.ID, chatID)
+}
+
+func (s *Service) isFollowUp(raw string, sess *session.Session) bool {
+	if sess == nil || sess.LastAnalysisJSON == "" {
+		return false
+	}
+	for _, r := range raw {
+		if r > unicode.MaxASCII {
+			return true
+		}
+	}
+	if strings.ContainsAny(raw, " ?!？!，,。.：:") {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "why", "how", "what", "when", "entry", "stop", "target", "risk", "support", "resistance":
+		return true
+	}
+	return false
+}
+
+func (s *Service) recordUsage(ctx context.Context, usr *user.User, kind, model string, completion *llm.CompletionResponse, latency time.Duration, status string) {
+	if s.usage == nil || usr == nil || usr.ID == 0 {
+		return
+	}
+	event := usage.Event{
+		UserID:    usr.ID,
+		RequestID: fmt.Sprintf("%d", time.Now().UnixNano()),
+		Kind:      kind,
+		Model:     model,
+		LatencyMS: int(latency.Milliseconds()),
+		Status:    status,
+	}
+	if completion != nil {
+		event.PromptTokens = completion.PromptTokens
+		event.CompletionTokens = completion.CompletionTokens
+	}
+	if err := s.usage.Record(ctx, event); err != nil {
+		s.logger.Warn("保存用量失败", "kind", kind, "error", err)
+	}
+}
+
+func estimateTokens(text string) int {
+	count := len([]rune(text))
+	if count == 0 {
+		return 0
+	}
+	return count/2 + 1
+}
+
+func estimateMessages(messages []session.Message) int {
+	total := 0
+	for _, message := range messages {
+		total += message.Tokens
+	}
+	return total
 }
 
 func (s *Service) ensureUser(ctx context.Context, msg *models.Message) (*user.User, error) {
@@ -316,7 +547,7 @@ func (s *Service) ensureUser(ctx context.Context, msg *models.Message) (*user.Us
 	return s.store.GetOrCreate(ctx, userID, username, s.cfg.OpenAIBaseURL, s.cfg.DefaultMode)
 }
 
-func (s *Service) handleStatus(ctx context.Context, chatID int64, usr *user.User) {
+func (s *Service) handleStatus(ctx context.Context, chatID int64, usr *user.User, sess *session.Session) {
 	key := "未配置"
 	if usr.HasKey() {
 		plaintext, err := s.decryptKey(usr)
@@ -340,7 +571,7 @@ func (s *Service) handleStatus(ctx context.Context, chatID int64, usr *user.User
 		endpoint = endpointHost(s.cfg.OpenAIBaseURL)
 	}
 
-	s.send(ctx, chatID, text.Status(
+	message := text.Status(
 		s.cfg.InstanceName,
 		version.Version,
 		s.cfg.AppEnv,
@@ -349,7 +580,17 @@ func (s *Service) handleStatus(ctx context.Context, chatID int64, usr *user.User
 		key,
 		endpoint,
 		time.Since(s.started),
-	))
+	)
+	if sess != nil && sess.CurrentSymbol != "" {
+		message += fmt.Sprintf("\n当前标的：<code>%s</code>", render.EscapeHTML(sess.CurrentSymbol))
+	}
+	if s.usage != nil && usr.ID != 0 {
+		if summary, err := s.usage.Today(ctx, usr.ID); err == nil {
+			message += fmt.Sprintf("\n今日请求：%d\n今日 tokens：%d",
+				summary.Requests, summary.PromptTokens+summary.CompletionTokens)
+		}
+	}
+	s.send(ctx, chatID, message)
 }
 
 func (s *Service) handleKeyInput(ctx context.Context, msg *models.Message, usr *user.User) {

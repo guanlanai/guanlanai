@@ -95,7 +95,7 @@ func testUser() *user.User {
 
 func TestAnalyze(t *testing.T) {
 	completer := &fakeCompleter{responses: []string{validOpinion()}}
-	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, testLogger())
+	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, 4, testLogger())
 
 	result, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing")
 	if err != nil {
@@ -114,7 +114,7 @@ func TestAnalyze(t *testing.T) {
 
 func TestAnalyzeRetriesInvalidOutput(t *testing.T) {
 	completer := &fakeCompleter{responses: []string{`{"bad":true}`, validOpinion()}}
-	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, testLogger())
+	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, 4, testLogger())
 
 	result, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing")
 	if err != nil {
@@ -133,7 +133,7 @@ func TestAnalyzeRetriesInvalidOutput(t *testing.T) {
 
 func TestAnalyzeInvalidOutput(t *testing.T) {
 	completer := &fakeCompleter{responses: []string{`{"bad":true}`, `{"bad":true}`}}
-	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, testLogger())
+	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, 4, testLogger())
 
 	_, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing")
 	if !errors.Is(err, ErrInvalidOutput) {
@@ -144,7 +144,7 @@ func TestAnalyzeInvalidOutput(t *testing.T) {
 func TestAnalyzeNoModel(t *testing.T) {
 	usr := testUser()
 	usr.Model = ""
-	service := New(fakeResolver{}, fakeProvider{}, &fakeCompleter{}, "", 1200, testLogger())
+	service := New(fakeResolver{}, fakeProvider{}, &fakeCompleter{}, "", 1200, 4, testLogger())
 
 	_, err := service.Analyze(context.Background(), usr, "sk-test", "BTC", "swing")
 	if !errors.Is(err, ErrNoModel) {

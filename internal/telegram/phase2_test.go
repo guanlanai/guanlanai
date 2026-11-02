@@ -14,6 +14,7 @@ import (
 	"github.com/guanlanai/guanlanai/internal/config"
 	"github.com/guanlanai/guanlanai/internal/llm"
 	"github.com/guanlanai/guanlanai/internal/netguard"
+	"github.com/guanlanai/guanlanai/internal/session"
 	"github.com/guanlanai/guanlanai/internal/user"
 )
 
@@ -330,6 +331,14 @@ func (f *fakeAnalyzer) Analyze(_ context.Context, _ *user.User, _, query, mode s
 	f.query = query
 	f.mode = mode
 	return f.result, f.err
+}
+
+func (f *fakeAnalyzer) Chat(_ context.Context, _ *user.User, _, _, _ string) (*agent.ChatResult, error) {
+	return &agent.ChatResult{Content: "answer"}, f.err
+}
+
+func (f *fakeAnalyzer) Summarize(_ context.Context, _ *user.User, _, _ string, _ []session.Message) (*agent.ChatResult, error) {
+	return &agent.ChatResult{Content: "summary"}, f.err
 }
 
 func TestAnalyzeFlow(t *testing.T) {
