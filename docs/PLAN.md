@@ -716,7 +716,7 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 
 - SQLite repository、用户/会话表、Key 加密、`/key` 收取与删除、Key 校验、`/baseurl`、`/model`、`/status` 掩码、自定义 endpoint 的 SSRF 防护。
 - 验收：Key 不以明文出现在 DB/日志；删除消息成功；错误 Key 有明确提示；自定义代理可用；私网/元数据地址被拒绝；重启后 Key 仍可用。
-- 实际状态：`internal/secrets`、`internal/netguard`、`internal/llm/openai`、`internal/user`、用户 SQLite repository 和 `/key`/`/baseurl`/`/model`/`/mode`/`/status` 已实现。staging 已用真实 Key 验证：Key 为 BLOB 密文、无 `sk-` 明文、`key_status=valid`；`/model` 与 `/mode` 已生效。prod 已切 `phase2`，用户需在 prod 重新配置 Key。
+- 实际状态：`internal/secrets`、`internal/netguard`、`internal/llm/openai`、`internal/user`、用户 SQLite repository 和 `/key`/`/baseurl`/`/model`/`/mode`/`/status` 已实现。staging 与 prod 均已用真实 Key 验证：Key 为 BLOB 密文、无 `sk-` 明文、`key_status=valid`；`/model` 与 `/mode` 已生效。
 
 ### Phase 3：行情与观点（2–3 天）
 

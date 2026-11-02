@@ -42,7 +42,7 @@ make docker            # 本机架构镜像
 - 本机可用 `ssh o1` 登录 VPS；实测 Ubuntu 26.04 `aarch64`、A1.Flex 1 OCPU/5.8GB、region `iad`。Docker 29.1.3 / Compose 2.40.3 已安装。
 - Phase 0 已部署：`guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，容器用户 `PUID/PGID=1001`，无宿主端口发布。
 - Phase 1 已部署到 prod/staging：镜像 `guanlanai:phase1`，`@GuanLanAI_bot` 和 `@ax_ha_1_bot` 均已连接。
-- Phase 2 已部署到 prod/staging：镜像 `guanlanai:phase2`，包含 Key 加密、`/key`、`/baseurl`、`/model`、`/mode`、SSRF 防护；staging 已用真实 Key 验证，prod 需用户重新配置 Key。
+- Phase 2 已部署到 prod/staging：镜像 `guanlanai:phase2`，包含 Key 加密、`/key`、`/baseurl`、`/model`、`/mode`、SSRF 防护；两套环境均已用真实 Key 验证。
 - Oracle Security List/NSG 只开 SSH；不要暴露 8080，健康检查在容器内或用 `127.0.0.1`。
 - 测试 bot 可同机：独立 `.env`、Bot Token、`APP_MASTER_KEY`、SQLite、volume、compose project；不共享端口和密钥。
 - 镜像必须匹配 VPS 架构（Oracle Ampere 是 arm64）；优先构建 amd64/arm64 多架构镜像，或按 `uname -m` 在 VPS 构建。
