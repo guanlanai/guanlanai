@@ -617,7 +617,7 @@ TRADING_ENABLED=false
 - 保留公网 IP，确认 NTP 时间同步；注意免费额度、块存储和出站流量。
 - 单 VPS 是单点故障：生产/测试会一起挂；备份至少要定期拉到 VPS 外。
 
-当前 VPS 实测（2026-11-02，`ssh o1`）：
+当前 VPS 实测（2026-11-02）：
 
 - Oracle `VM.Standard.A1.Flex`，region `iad`（US-Ashburn），Ubuntu 26.04，`aarch64`，1 OCPU，5.8GB RAM，45GB 磁盘（41GB 可用），无 swap。
 - Docker 29.1.3 / Compose 2.40.3 已安装，`ubuntu` 已加入 `docker` 组；镜像 `guanlanai:phase0`、`phase1`、`phase2` 已加载。

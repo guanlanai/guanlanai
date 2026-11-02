@@ -1,6 +1,8 @@
 # 部署说明
 
-目标机器：Oracle Cloud 免费 VPS，`ssh o1` 登录，Ubuntu 26.04 / `arm64`。
+目标机器：Oracle Cloud 免费 VPS，通过本机 SSH 配置登录，Ubuntu 26.04 / `arm64`。
+
+> 下文的 `YOUR_VPS` 替换为你本机的 SSH 别名或 host；不要把个人别名提交到仓库。
 
 ## 目录
 
@@ -19,7 +21,7 @@
 ## 首次准备
 
 ```sh
-ssh o1
+ssh YOUR_VPS
 sudo mkdir -p /opt/guanlanai/prod /opt/guanlanai/staging
 sudo chown -R ubuntu:ubuntu /opt/guanlanai
 ```
@@ -44,7 +46,7 @@ mkdir -p data
 
 ```sh
 VERSION=phase6 make docker
-docker save guanlanai:phase6 | gzip | ssh o1 'sudo docker load'
+docker save guanlanai:phase6 | gzip | ssh YOUR_VPS 'sudo docker load'
 ```
 
 如果是 x86 本机，使用 `make docker-multi` 或 `docker buildx build --platform linux/arm64`。
@@ -77,9 +79,9 @@ sudo env IMAGE=guanlanai:phase6 docker compose up -d
 把 `deploy/backup.sh` 复制到 VPS 并安装 cron：
 
 ```sh
-scp deploy/backup.sh o1:/opt/guanlanai/backup.sh
-ssh o1 'chmod 700 /opt/guanlanai/backup.sh'
-ssh o1 '(crontab -l 2>/dev/null; echo "15 3 * * * /opt/guanlanai/backup.sh >> /opt/guanlanai/backup.log 2>&1") | crontab -'
+scp deploy/backup.sh YOUR_VPS:/opt/guanlanai/backup.sh
+ssh YOUR_VPS 'chmod 700 /opt/guanlanai/backup.sh'
+ssh YOUR_VPS '(crontab -l 2>/dev/null; echo "15 3 * * * /opt/guanlanai/backup.sh >> /opt/guanlanai/backup.log 2>&1") | crontab -'
 ```
 
 脚本备份 prod/staging，保留 14 天，日志写入 `/opt/guanlanai/backup.log`。

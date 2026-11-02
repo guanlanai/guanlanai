@@ -1,6 +1,8 @@
 # 运维手册
 
-目标机：Oracle Cloud 免费 VPS，`ssh o1` 登录。Ubuntu 26.04 / `aarch64`，1 OCPU / 5.8GB / 45GB。
+目标机：Oracle Cloud 免费 VPS，通过本机 SSH 配置登录。Ubuntu 26.04 / `aarch64`，1 OCPU / 5.8GB / 45GB。
+
+> 下文的 `YOUR_VPS` 替换为你本机的 SSH 别名或 host；不要把个人别名提交到仓库。
 
 ## 目录与服务
 
@@ -45,13 +47,13 @@ sudo docker compose exec -T bot wget -qO- http://127.0.0.1:8080/readyz
 
 ```sh
 VERSION=phase2 make docker
-docker save guanlanai:phase2 | gzip | ssh o1 'sudo docker load'
+docker save guanlanai:phase6 | gzip | ssh YOUR_VPS 'sudo docker load'
 ```
 
 先更新 staging：
 
 ```sh
-ssh o1
+ssh YOUR_VPS
 cd /opt/guanlanai/staging
 sudo env IMAGE=guanlanai:phase2 docker compose up -d
 sudo docker inspect --format '{{.State.Health.Status}}' guanlanai-staging-bot-1
