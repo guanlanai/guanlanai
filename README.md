@@ -4,6 +4,16 @@
 
 当前项目处于早期阶段：用户使用自己的 API Key（支持 OpenAI 兼容代理地址），输入加密货币代码即可获得交易观点，暂不支持下单，也暂不支持股票。部署目标是一台甲骨文免费 VPS，可同机运行生产与测试 bot。
 
+## 使用
+
+扫描二维码或直接打开 [@GuanLanAI_bot](https://t.me/GuanLanAI_bot)：
+
+<p align="center">
+  <a href="https://t.me/GuanLanAI_bot">
+    <img src="docs/assets/guanlanai-bot-qr.png" alt="观澜 Bot 二维码" width="360">
+  </a>
+</p>
+
 ## 当前进度
 
 Phase 0 已完成：Go 骨架、环境配置、SQLite 迁移、`/healthz` / `/readyz`、Dockerfile、Compose 和部署目录。
