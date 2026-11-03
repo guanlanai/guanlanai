@@ -14,6 +14,18 @@
   </a>
 </p>
 
+## 架构
+
+```mermaid
+flowchart LR
+    U["Telegram"] --> T["接入层<br/>路由 · 限流"]
+    T --> A["Agent<br/>分析 · 工具 · 摘要"]
+    A --> D["领域 / 端口<br/>analysis · market · llm"]
+    D --> S["状态 / 外部<br/>SQLite · 行情 · LLM"]
+```
+
+完整的运行时架构、分析流程、追问流程和部署拓扑见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
 ## 当前进度
 
 Phase 0 已完成：Go 骨架、环境配置、SQLite 迁移、`/healthz` / `/readyz`、Dockerfile、Compose 和部署目录。
@@ -53,4 +65,5 @@ make docker            # 构建本机架构镜像
 - 上线验收报告见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)
 - 私聊多会话/群组会话设计见 [docs/SESSION_DESIGN.md](docs/SESSION_DESIGN.md)
 - 分析周期与个人偏好设计见 [docs/ANALYSIS_PROFILE_DESIGN.md](docs/ANALYSIS_PROFILE_DESIGN.md)
+- 运行时架构、分析/追问流程和部署拓扑见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - 安全边界、提示词注入防护与 P1 待办见 [docs/SECURITY.md](docs/SECURITY.md)

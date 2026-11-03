@@ -121,6 +121,8 @@ BTC/USDT · 加密 · 波段
 
 ## 4. 系统架构
 
+> 运行时架构、首次分析流程、追问工具循环和部署拓扑见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
 ```text
 Telegram long polling
         │
