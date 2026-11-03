@@ -51,7 +51,8 @@ guanlanai backup       # VACUUM INTO 备份，容器内用 docker compose exec
 - Phase 3 已部署到 prod/staging：镜像 `guanlanai:phase3`，Binance 行情 + 技术指标 + `gpt-5-mini` 结构化观点；staging 已验证 BTC/SOL/BNB，prod 已切换。
 - Phase 4 已部署到 prod/staging：镜像 `guanlanai:phase4`，会话上下文、追问、摘要裁剪、限流、usage 记录；staging 已验证，prod 已切换。
 - Phase 5 已部署到 prod/staging：镜像 `guanlanai:phase5`，新增 `guanlanai backup`（VACUUM INTO）、观点长度上限和测试补全；备份已在 staging 验证。
-- 会话模型 Phase A/B 已部署到 prod/staging：镜像 `guanlanai:sessions-v3`，私聊多会话（`/new`、`/sessions`、`/switch`、`/rename`、`/delete`）和群组按成员隔离会话；`GROUPS_ENABLED=true`、`MAX_PRIVATE_SESSIONS=20`，迁移 0002 已在两套环境验证且旧消息保留。群帮助文案已按 privacy mode 的实际行为修正；追问输出预算改用 `MAX_OUTPUT_TOKENS`，避免 reasoning tokens 耗尽导致空回复。
+- 会话模型 Phase A/B 已部署到 prod/staging：镜像 `guanlanai:sessions-v4`，私聊多会话（`/new`、`/sessions`、`/switch`、`/rename`、`/delete`）和群组按成员隔离会话；`GROUPS_ENABLED=true`、`MAX_PRIVATE_SESSIONS=20`，迁移 0002 已在两套环境验证且旧消息保留。群帮助文案已按 privacy mode 的实际行为修正；追问输出预算改用 `MAX_OUTPUT_TOKENS`，避免 reasoning tokens 耗尽导致空回复。
+- 多周期 SuperTrend 已部署到 prod/staging：确定性技术指标（ATR 10、乘数 3），随报告 JSON 提供给 LLM，包含线位、方向、距离和 `bars_since_flip`。
 - P1 加固已部署（`phase6`）：Telegram 发送每 chat 限速/全局限速/429 重试，以及 Binance/OpenAI 熔断器。
 - Oracle Security List/NSG 只开 SSH；不要暴露 8080，健康检查在容器内或用 `127.0.0.1`。
 - 测试 bot 可同机：独立 `.env`、Bot Token、`APP_MASTER_KEY`、SQLite、volume、compose project；不共享端口和密钥。

@@ -41,6 +41,60 @@ func TestAnalyzeUptrend(t *testing.T) {
 	if len(timeframe.Support) == 0 {
 		t.Fatal("缺少支撑位")
 	}
+	if timeframe.SuperTrend == nil {
+		t.Fatal("SuperTrend 缺失")
+	}
+	if timeframe.SuperTrend.Direction != "up" {
+		t.Fatalf("SuperTrend.Direction = %q, want up", timeframe.SuperTrend.Direction)
+	}
+	if timeframe.SuperTrend.Value >= 399 {
+		t.Fatalf("上涨趋势中 SuperTrend 应低于价格: %#v", timeframe.SuperTrend)
+	}
+	if timeframe.SuperTrend.DistancePct <= 0 {
+		t.Fatalf("SuperTrend.DistancePct = %v, want > 0", timeframe.SuperTrend.DistancePct)
+	}
+}
+
+func TestAnalyzeSuperTrendDowntrend(t *testing.T) {
+	candles := makeCandles(300, 400, -1)
+	timeframe, err := analyzeCandles(candles)
+	if err != nil {
+		t.Fatalf("analyzeCandles() error = %v", err)
+	}
+	if timeframe.SuperTrend == nil {
+		t.Fatal("SuperTrend 缺失")
+	}
+	if timeframe.SuperTrend.Direction != "down" {
+		t.Fatalf("SuperTrend = %#v", timeframe.SuperTrend)
+	}
+	price := candles[len(candles)-1].Close
+	if timeframe.SuperTrend.Value <= price {
+		t.Fatalf("下跌趋势中 SuperTrend 应高于价格: %#v", timeframe.SuperTrend)
+	}
+	if timeframe.SuperTrend.DistancePct >= 0 {
+		t.Fatalf("SuperTrend.DistancePct = %v, want < 0", timeframe.SuperTrend.DistancePct)
+	}
+}
+
+func TestAnalyzeSuperTrendConstantSeries(t *testing.T) {
+	candles := makeCandles(300, 100, 0)
+	timeframe, err := analyzeCandles(candles)
+	if err != nil {
+		t.Fatalf("analyzeCandles() error = %v", err)
+	}
+	if timeframe.SuperTrend == nil {
+		t.Fatal("SuperTrend 缺失")
+	}
+	// ATR = 2，乘数 3，因此下轨 = 100 - 6 = 94。
+	if timeframe.SuperTrend.Value != 94 {
+		t.Fatalf("SuperTrend.Value = %v, want 94", timeframe.SuperTrend.Value)
+	}
+	if timeframe.SuperTrend.Direction != "up" {
+		t.Fatalf("SuperTrend.Direction = %q, want up", timeframe.SuperTrend.Direction)
+	}
+	if timeframe.SuperTrend.Period != 10 || timeframe.SuperTrend.Multiplier != 3 {
+		t.Fatalf("SuperTrend 参数 = %#v", timeframe.SuperTrend)
+	}
 }
 
 func TestAnalyzeConstantSeries(t *testing.T) {

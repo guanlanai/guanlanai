@@ -11,16 +11,28 @@ import (
 
 // Timeframe 是单个周期的压缩指标。
 type Timeframe struct {
-	Trend       string    `json:"trend"`
-	EMA20       *float64  `json:"ema20,omitempty"`
-	EMA50       *float64  `json:"ema50,omitempty"`
-	EMA200      *float64  `json:"ema200,omitempty"`
-	RSI14       *float64  `json:"rsi14,omitempty"`
-	MACDHist    *float64  `json:"macd_hist,omitempty"`
-	ATRPct      *float64  `json:"atr_pct,omitempty"`
-	VolumeRatio *float64  `json:"volume_ratio,omitempty"`
-	Support     []float64 `json:"support"`
-	Resistance  []float64 `json:"resistance"`
+	Trend       string      `json:"trend"`
+	EMA20       *float64    `json:"ema20,omitempty"`
+	EMA50       *float64    `json:"ema50,omitempty"`
+	EMA200      *float64    `json:"ema200,omitempty"`
+	RSI14       *float64    `json:"rsi14,omitempty"`
+	MACDHist    *float64    `json:"macd_hist,omitempty"`
+	ATRPct      *float64    `json:"atr_pct,omitempty"`
+	SuperTrend  *SuperTrend `json:"supertrend,omitempty"`
+	VolumeRatio *float64    `json:"volume_ratio,omitempty"`
+	Support     []float64   `json:"support"`
+	Resistance  []float64   `json:"resistance"`
+}
+
+// SuperTrend 是单个周期的 SuperTrend 指标快照。
+// Direction 为 up 表示价格在 SuperTrend 线之上、趋势偏多；down 相反。
+type SuperTrend struct {
+	Value         float64 `json:"value"`
+	Direction     string  `json:"direction"`
+	DistancePct   float64 `json:"distance_pct"`
+	BarsSinceFlip int     `json:"bars_since_flip"`
+	Period        int     `json:"period"`
+	Multiplier    float64 `json:"multiplier"`
 }
 
 // Report 是传给 LLM 的完整技术面摘要。
@@ -123,6 +135,9 @@ func analyzeCandles(candles []market.Candle) (Timeframe, error) {
 	atr, okATR := atrLast(candles, 14)
 	if okATR && price > 0 {
 		result.ATRPct = ptr(atr / price * 100)
+	}
+	if superTrend, ok := superTrendLast(candles, superTrendATRPeriod, superTrendMultiplier); ok {
+		result.SuperTrend = &superTrend
 	}
 	result.VolumeRatio = ptr(volumeRatio(volumes, 20))
 
@@ -250,6 +265,11 @@ func macdHistLast(values []float64) (float64, bool) {
 	return macd[len(macd)-1] - signal[last], true
 }
 
+const (
+	superTrendATRPeriod  = 10
+	superTrendMultiplier = 3.0
+)
+
 func atrLast(candles []market.Candle, period int) (float64, bool) {
 	if len(candles) <= period || period <= 0 {
 		return 0, false
@@ -272,6 +292,121 @@ func atrLast(candles []market.Candle, period int) (float64, bool) {
 	atr := sum / float64(period)
 	for i := period; i < len(trs); i++ {
 		atr = (atr*float64(period-1) + trs[i]) / float64(period)
+	}
+	return atr, true
+}
+
+// superTrendLast 计算标准 SuperTrend：ATR(period) + multiplier 构建上下轨，
+// 返回最后一个周期的线位、方向以及距离最近一次翻转的 K 线数量。
+func superTrendLast(candles []market.Candle, period int, multiplier float64) (SuperTrend, bool) {
+	if period <= 0 || multiplier <= 0 || len(candles) < period {
+		return SuperTrend{}, false
+	}
+	atr, ok := atrSeries(candles, period)
+	if !ok {
+		return SuperTrend{}, false
+	}
+
+	start := period - 1
+	prevUpper := (candles[start].High+candles[start].Low)/2 + multiplier*atr[start]
+	prevLower := (candles[start].High+candles[start].Low)/2 - multiplier*atr[start]
+	prevTrend := 1
+	prevLine := prevLower
+	if candles[start].Close < prevLower {
+		prevTrend = -1
+		prevLine = prevUpper
+	}
+	barsSinceFlip := 0
+
+	for i := start + 1; i < len(candles); i++ {
+		mid := (candles[i].High + candles[i].Low) / 2
+		basicUpper := mid + multiplier*atr[i]
+		basicLower := mid - multiplier*atr[i]
+
+		upper := basicUpper
+		if basicUpper >= prevUpper && candles[i-1].Close <= prevUpper {
+			upper = prevUpper
+		}
+		lower := basicLower
+		if basicLower <= prevLower && candles[i-1].Close >= prevLower {
+			lower = prevLower
+		}
+
+		trend := prevTrend
+		line := prevLine
+		if prevTrend == 1 {
+			if candles[i].Close < lower {
+				trend = -1
+				line = upper
+			} else {
+				trend = 1
+				line = lower
+			}
+		} else {
+			if candles[i].Close > upper {
+				trend = 1
+				line = lower
+			} else {
+				trend = -1
+				line = upper
+			}
+		}
+
+		if trend != prevTrend {
+			barsSinceFlip = 0
+		} else {
+			barsSinceFlip++
+		}
+		prevUpper, prevLower, prevTrend, prevLine = upper, lower, trend, line
+	}
+
+	price := candles[len(candles)-1].Close
+	distancePct := 0.0
+	if price > 0 {
+		distancePct = (price - prevLine) / price * 100
+	}
+	direction := "down"
+	if prevTrend == 1 {
+		direction = "up"
+	}
+	return SuperTrend{
+		Value:         prevLine,
+		Direction:     direction,
+		DistancePct:   distancePct,
+		BarsSinceFlip: barsSinceFlip,
+		Period:        period,
+		Multiplier:    multiplier,
+	}, true
+}
+
+// atrSeries 返回与 K 线对齐的 Wilder ATR 序列，period-1 之前为 NaN。
+func atrSeries(candles []market.Candle, period int) ([]float64, bool) {
+	if period <= 0 || len(candles) < period {
+		return nil, false
+	}
+	trs := make([]float64, len(candles))
+	for i := range candles {
+		if i == 0 {
+			trs[i] = candles[i].High - candles[i].Low
+			continue
+		}
+		high := candles[i].High
+		low := candles[i].Low
+		prevClose := candles[i-1].Close
+		trs[i] = math.Max(high-low, math.Max(math.Abs(high-prevClose), math.Abs(low-prevClose)))
+	}
+
+	atr := make([]float64, len(candles))
+	for i := range atr {
+		atr[i] = math.NaN()
+	}
+	sum := 0.0
+	for i := 0; i < period; i++ {
+		sum += trs[i]
+	}
+	atr[period-1] = sum / float64(period)
+	for i := period; i < len(candles); i++ {
+		atr[i] = (atr[i-1]*float64(period-1) + trs[i]) / float64(period)
 	}
 	return atr, true
 }

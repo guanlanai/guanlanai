@@ -18,7 +18,9 @@ Phase 4 已部署：会话上下文、分析后追问、自动摘要裁剪、每
 
 Phase 5 已部署：新增 `guanlanai backup`（SQLite `VACUUM INTO`）、观点长度上限和运维文档；备份命令已在 staging 验证。
 
-会话模型 Phase A/B 已部署到 prod/staging：私聊多会话（`/new`、`/sessions`、`/switch`、`/rename`、`/delete`）和群组按成员隔离会话；镜像 `guanlanai:sessions-v3`，群组通过 `GROUPS_ENABLED=true` 开启。
+技术指标新增多周期 SuperTrend（ATR 10、乘数 3），LLM 可直接引用线位、方向、距离和翻转后的 K 线数；当前生产/测试镜像为 `guanlanai:sessions-v4`。
+
+会话模型 Phase A/B 已部署到 prod/staging：私聊多会话（`/new`、`/sessions`、`/switch`、`/rename`、`/delete`）和群组按成员隔离会话；镜像 `guanlanai:sessions-v4`，群组通过 `GROUPS_ENABLED=true` 开启。
 
 ## 开发
 
