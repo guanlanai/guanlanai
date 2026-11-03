@@ -492,6 +492,7 @@ type Request struct {
 ## 10. 会话与上下文管理
 
 > 私聊多会话/群组按用户隔离的详细设计见 `docs/SESSION_DESIGN.md`。
+> 周期、指标和风险偏好的设计见 `docs/ANALYSIS_PROFILE_DESIGN.md`。
 
 - 私聊：`user_id + chat_id` 下可有多条会话，由 `chat_state` 指向 active。
 - 群组：`user_id + chat_id + scope='group'` 固定一条，不同成员互相隔离。
