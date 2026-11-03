@@ -15,7 +15,7 @@ var configEnvKeys = []string{
 	"ALLOW_SERVER_KEY", "ALLOW_CUSTOM_BASE_URL", "CUSTOM_BASE_URL_ALLOWLIST",
 	"ALLOW_INSECURE_BASE_URL", "ALLOW_PRIVATE_BASE_URL_FOR_DEV",
 	"CUSTOM_BASE_URL_TIMEOUT", "CUSTOM_BASE_URL_MAX_RESPONSE_BYTES",
-	"DATA_RETENTION_DAYS",
+	"DATA_RETENTION_DAYS", "MAX_PRIVATE_SESSIONS", "GROUPS_ENABLED",
 	"ANALYSIS_RATE_PER_MIN", "ANALYSIS_RATE_PER_HOUR", "CHAT_RATE_PER_MIN",
 	"TELEGRAM_MAX_CONCURRENCY", "LLM_MAX_CONCURRENCY", "MARKET_MAX_CONCURRENCY",
 	"MAX_PROMPT_TOKENS", "MAX_OUTPUT_TOKENS", "GLOBAL_DAILY_LLM_TOKENS",
@@ -58,6 +58,12 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if !cfg.StrictModelList {
 		t.Fatal("StrictModelList 默认必须为 true")
+	}
+	if cfg.MaxPrivateSessions != 20 {
+		t.Fatalf("MaxPrivateSessions = %d, want 20", cfg.MaxPrivateSessions)
+	}
+	if cfg.GroupsEnabled {
+		t.Fatal("GroupsEnabled 默认必须为 false")
 	}
 }
 

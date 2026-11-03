@@ -22,7 +22,7 @@ guanlanai backup       # VACUUM INTO 备份，容器内用 docker compose exec
 
 ## 产品边界（早期版本必须遵守）
 
-- 只做 Telegram 私聊，不提前做 Web/App，也不做群组。
+- 只做 Telegram 私聊和群组（群组按成员隔离会话），不提前做 Web/App。
 - 用户自带 API Key，初期走 OpenAI Chat Completions 兼容协议；支持每用户自定义兼容 `base_url`，其他厂商通过 provider 接口后加。
 - 当前只做加密货币，输入单个币种代码（如 `BTC`、`ETH`）输出交易观点；暂不做股票（美股/A 股/港股等），也**不下单**。
 - USDC 充值/高级功能只预留接口，不实现；币安、Gate 等交易所执行同理，后续再接。
@@ -51,9 +51,11 @@ guanlanai backup       # VACUUM INTO 备份，容器内用 docker compose exec
 - Phase 3 已部署到 prod/staging：镜像 `guanlanai:phase3`，Binance 行情 + 技术指标 + `gpt-5-mini` 结构化观点；staging 已验证 BTC/SOL/BNB，prod 已切换。
 - Phase 4 已部署到 prod/staging：镜像 `guanlanai:phase4`，会话上下文、追问、摘要裁剪、限流、usage 记录；staging 已验证，prod 已切换。
 - Phase 5 已部署到 prod/staging：镜像 `guanlanai:phase5`，新增 `guanlanai backup`（VACUUM INTO）、观点长度上限和测试补全；备份已在 staging 验证。
+- 会话模型 Phase A/B 已部署到 prod/staging：镜像 `guanlanai:sessions-v2`，私聊多会话（`/new`、`/sessions`、`/switch`、`/rename`、`/delete`）和群组按成员隔离会话；`GROUPS_ENABLED=true`、`MAX_PRIVATE_SESSIONS=20`，迁移 0002 已在两套环境验证且旧消息保留。群帮助文案已按 privacy mode 的实际行为修正。
 - P1 加固已部署（`phase6`）：Telegram 发送每 chat 限速/全局限速/429 重试，以及 Binance/OpenAI 熔断器。
 - Oracle Security List/NSG 只开 SSH；不要暴露 8080，健康检查在容器内或用 `127.0.0.1`。
 - 测试 bot 可同机：独立 `.env`、Bot Token、`APP_MASTER_KEY`、SQLite、volume、compose project；不共享端口和密钥。
+- staging `@ax_ha_1_bot` 和 prod `@GuanLanAI_bot` 均已在 BotFather 关闭 privacy mode，群内可直接 @提及；保持 Bot 在群内即可，不需要设为管理员。
 - 镜像必须匹配 VPS 架构（Oracle Ampere 是 arm64）；优先构建 amd64/arm64 多架构镜像，或按 `uname -m` 在 VPS 构建。
 - 当前 VPS 上 `api.binance.com` 返回 451，`data-api.binance.vision` 返回 200；默认走 vision；CoinGecko 兜底为低优先级。
 - 111（rpcbind）在监听；无 NFS 需求时禁用，并确认 Security List 未放行。

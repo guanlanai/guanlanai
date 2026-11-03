@@ -12,7 +12,7 @@ const disclaimer = "⚠️ 仅供参考，不构成投资建议。"
 // Welcome 是 /start 的欢迎语。
 func Welcome() string {
 	return `<b>观澜 · GuanLanAI</b>
-Telegram 加密货币交易分析助手（Phase 4）
+Telegram 加密货币交易分析助手（私聊多会话 · 群组隔离）
 
 我可以根据币种代码给出结构化交易观点，并在分析后继续追问。当前已接入 Telegram、用户 Key、Binance 行情、LLM 分析和会话记忆。
 
@@ -25,11 +25,13 @@ Telegram 加密货币交易分析助手（Phase 4）
 /mode - 切换短线/波段
 /status - 运行状态
 /reset - 清空当前会话
+/new [标题] - 新建私聊会话
+/sessions - 查看私聊会话
 /analyze BTC - 分析币种
 
 首次使用请先发送 /key 配置 API Key。
 
-当前仅支持私聊和加密货币，暂不支持股票，也不提供真实下单。
+当前支持私聊和群组，仅限加密货币，暂不支持股票，也不提供真实下单。
 ` + disclaimer
 }
 
@@ -44,6 +46,11 @@ func Help() string {
 /help - 使用帮助
 /status - 查看实例、Key、模型和接入进度
 /reset - 清空当前会话
+/new [标题] - 新建私聊会话
+/sessions - 列出私聊会话
+/switch &lt;id&gt; - 切换当前会话
+/rename &lt;id&gt; &lt;标题&gt; - 重命名会话
+/delete &lt;id&gt; confirm - 删除会话
 /key - 配置 OpenAI API Key
 /key delete - 删除已保存的 Key
 /baseurl - 配置 OpenAI 兼容代理
@@ -55,7 +62,7 @@ func Help() string {
 Key 配置流程：/key → 下一条消息发送 Key → Bot 删除该消息并加密保存。
 自定义代理必须是公网 HTTPS 地址，且包含 /v1 等路径。
 
-当前仅支持私聊、加密货币和技术面观点；股票、新闻、真实下单暂不支持。
+当前支持私聊和群组，仅限加密货币和技术面观点；股票、新闻、真实下单暂不支持。
 ` + disclaimer
 }
 
@@ -198,6 +205,141 @@ func GenericError() string {
 // Reset 是 /reset 的回复。
 func Reset() string {
 	return "已清空当前会话上下文和摘要。"
+}
+
+// SessionItem 是 /sessions 列表中的一项。
+type SessionItem struct {
+	ID    int64
+	Title string
+}
+
+// SessionList 展示私聊会话列表。
+func SessionList(items []SessionItem, activeID int64, total int) string {
+	var builder strings.Builder
+	builder.WriteString("<b>会话列表</b>\n")
+	for _, item := range items {
+		builder.WriteString(fmt.Sprintf("%d. %s", item.ID, html.EscapeString(item.Title)))
+		if item.ID == activeID {
+			builder.WriteString(" （active）")
+		}
+		builder.WriteString("\n")
+	}
+	builder.WriteString("\n使用 /switch &lt;id&gt; 切换，/new [标题] 新建。")
+	if total > len(items) {
+		builder.WriteString(fmt.Sprintf("\n仅显示最近 %d 条，共 %d 条。", len(items), total))
+	}
+	return builder.String()
+}
+
+// SessionCreated 表示会话已创建并设为 active。
+func SessionCreated(id int64, title string) string {
+	return fmt.Sprintf("已新建会话 %d：<b>%s</b>，并切换为当前会话。", id, html.EscapeString(title))
+}
+
+// SessionSwitched 表示会话已切换。
+func SessionSwitched(id int64, title string) string {
+	return fmt.Sprintf("已切换到会话 %d：<b>%s</b>。", id, html.EscapeString(title))
+}
+
+// SessionRenamed 表示会话已重命名。
+func SessionRenamed(id int64, title string) string {
+	return fmt.Sprintf("会话 %d 已重命名为 <b>%s</b>。", id, html.EscapeString(title))
+}
+
+// SessionDeleted 表示会话已删除。
+func SessionDeleted(id int64) string {
+	return fmt.Sprintf("已删除会话 %d。", id)
+}
+
+// SessionDeleteConfirm 要求确认删除。
+func SessionDeleteConfirm(id int64, title string) string {
+	return fmt.Sprintf("确认删除会话 %d：<b>%s</b>？\n发送 <code>/delete %d confirm</code> 确认。",
+		id, html.EscapeString(title), id)
+}
+
+// SessionNotFound 表示会话不存在或不属于当前用户。
+func SessionNotFound() string {
+	return "找不到该会话，或它不属于当前聊天。发送 /sessions 查看可用会话。"
+}
+
+// SessionLimitReached 表示私聊会话数量已达上限。
+func SessionLimitReached(limit int) string {
+	return fmt.Sprintf("每个私聊最多保留 %d 条会话。请先使用 /delete &lt;id&gt; confirm 删除旧会话。", limit)
+}
+
+// SessionLastOne 表示不能删除最后一个会话。
+func SessionLastOne() string {
+	return "至少需要保留一条私聊会话，不能删除最后一个。"
+}
+
+// SessionUsage 是会话子命令的参数提示。
+func SessionUsage(command string) string {
+	switch command {
+	case "/switch":
+		return "用法：/switch &lt;id&gt;。发送 /sessions 查看会话 ID。"
+	case "/rename":
+		return "用法：/rename &lt;id&gt; &lt;标题&gt;。"
+	case "/delete":
+		return "用法：/delete &lt;id&gt; 或 /delete &lt;id&gt; confirm。"
+	default:
+		return "用法：/new [标题]。"
+	}
+}
+
+// SessionTitleTooLong 表示标题超长。
+func SessionTitleTooLong(limit int) string {
+	return fmt.Sprintf("会话标题最多 %d 个字符。", limit)
+}
+
+// PrivateConfigHint 提示群组中不能配置 Key 或管理会话。
+func PrivateConfigHint() string {
+	return "请在私聊中配置 Key 和管理会话。"
+}
+
+// NeedKeyInGroup 提示群成员先私聊配置 Key。
+func NeedKeyInGroup() string {
+	return "请先私聊我并使用 /key 配置 OpenAI API Key，然后在群里分析。"
+}
+
+// GroupHelp 是群组中的 /help 说明。
+func GroupHelp(botUsername string) string {
+	name := strings.TrimSpace(botUsername)
+	if name == "" {
+		name = "本 Bot"
+	} else {
+		name = "@" + name
+	}
+	return fmt.Sprintf(`<b>群组使用说明</b>
+在群里使用 <code>/analyze%s BTC</code>，或回复我的消息。
+若已在 BotFather 关闭 privacy mode（或把我设为群管理员），也可以直接 <code>%s BTC</code>。
+
+命令：
+/analyze &lt;币种&gt; - 分析币种，群内请带 %s
+/status - 查看当前会话状态
+/reset - 清空你在本群的会话
+/help - 本说明
+
+每位成员在本群的上下文互相隔离；Key、模型和模式请在私聊配置。
+%s`, html.EscapeString(name), html.EscapeString(name), html.EscapeString(name), disclaimer)
+}
+
+// GroupStatus 展示群组中当前成员的会话状态。
+func GroupStatus(instance, model, mode string) string {
+	if model == "" {
+		model = "未配置"
+	}
+	return fmt.Sprintf(`<b>本群会话状态</b>
+实例：<code>%s</code>
+模型：<code>%s</code>
+模式：<code>%s</code>
+
+每位成员在本群的上下文互相隔离；Key、模型和模式请在私聊配置。
+%s`,
+		html.EscapeString(instance),
+		html.EscapeString(model),
+		html.EscapeString(mode),
+		disclaimer,
+	)
 }
 
 // FollowUpNeedAnalysis 提示先做一次分析。

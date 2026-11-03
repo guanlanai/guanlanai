@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,9 @@ type Service struct {
 
 	pendingMu sync.Mutex
 	pending   map[int64]pendingState
+
+	botUsername string
+	botID       int64
 }
 
 type pendingKind int
@@ -143,6 +147,8 @@ func (s *Service) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("获取 Bot 信息: %w", err)
 	}
+	s.botUsername = me.Username
+	s.botID = me.ID
 	s.logger.Info("Telegram Bot 已连接",
 		"bot_id", me.ID,
 		"username", me.Username,
@@ -165,18 +171,35 @@ func (s *Service) onUpdate(ctx context.Context, _ *bot.Bot, update *models.Updat
 	}
 
 	msg := update.Message
-	if msg.Chat.Type != models.ChatTypePrivate {
-		s.send(ctx, msg.Chat.ID, text.PrivateOnly())
-		return
-	}
-	if strings.TrimSpace(msg.Text) == "" {
-		s.send(ctx, msg.Chat.ID, text.TextOnly())
+	switch msg.Chat.Type {
+	case models.ChatTypePrivate:
+		if strings.TrimSpace(msg.Text) == "" {
+			s.send(ctx, msg.Chat.ID, text.TextOnly())
+			return
+		}
+	case models.ChatTypeGroup, models.ChatTypeSupergroup:
+		if !s.cfg.GroupsEnabled {
+			return
+		}
+		if msg.From == nil {
+			return
+		}
+		if strings.TrimSpace(msg.Text) == "" {
+			return
+		}
+		// 群组只处理提及、回复 Bot 或明确的命令，其余消息不回复也不落库。
+		if !s.groupAddressed(msg) {
+			return
+		}
+	default:
+		// 频道等类型直接忽略。
 		return
 	}
 
 	s.logger.Info("收到 Telegram 消息",
 		"update_id", update.ID,
 		"chat", logging.HashID(msg.Chat.ID),
+		"chat_type", msg.Chat.Type,
 		"text_len", len([]rune(msg.Text)),
 	)
 
@@ -192,6 +215,7 @@ func (s *Service) handle(ctx context.Context, update *models.Update) {
 	msg := update.Message
 	raw := strings.TrimSpace(msg.Text)
 	command, args := parseCommand(raw)
+	scope := scopeForChat(msg.Chat.Type)
 
 	usr, err := s.ensureUser(ctx, msg)
 	if err != nil {
@@ -200,44 +224,71 @@ func (s *Service) handle(ctx context.Context, update *models.Update) {
 		return
 	}
 
-	// 待输入状态优先处理；命令会取消待输入并继续按命令处理。
-	pending, hasPending := s.takePending(msg.Chat.ID)
-	if hasPending && !strings.HasPrefix(raw, "/") {
-		switch pending {
-		case pendingKey:
-			s.handleKeyInput(ctx, msg, usr)
-		case pendingBaseURL:
-			s.processBaseURL(ctx, msg.Chat.ID, raw, usr)
+	// 待输入状态只存在于私聊；命令会取消待输入并继续按命令处理。
+	if scope == session.ScopePrivate {
+		pending, hasPending := s.takePending(msg.Chat.ID)
+		if hasPending && !strings.HasPrefix(raw, "/") {
+			switch pending {
+			case pendingKey:
+				s.handleKeyInput(ctx, msg, usr)
+			case pendingBaseURL:
+				s.processBaseURL(ctx, msg.Chat.ID, raw, usr)
+			}
+			return
 		}
-		return
 	}
 
 	s.logger.Info("处理 Telegram 消息",
 		"chat", logging.HashID(msg.Chat.ID),
+		"chat_type", msg.Chat.Type,
 		"command", command,
 		"text_len", len([]rune(raw)),
 	)
 
-	sess, err := s.ensureSession(ctx, usr, msg.Chat.ID)
+	// 群组只能配置 Key 和管理私聊会话；统一引导回私聊。
+	if scope == session.ScopeGroup && privateOnlyCommand(command) {
+		s.send(ctx, msg.Chat.ID, text.PrivateConfigHint())
+		return
+	}
+
+	sess, err := s.ensureSession(ctx, usr, msg.Chat.ID, scope)
 	if err != nil {
 		s.logger.Warn("读取会话失败，继续无会话处理", "chat", logging.HashID(msg.Chat.ID), "error", err)
 	}
 
 	switch command {
 	case "/start":
+		if scope == session.ScopeGroup {
+			s.send(ctx, msg.Chat.ID, text.GroupHelp(s.botUsername))
+			return
+		}
 		message := text.Welcome()
 		if !usr.HasKey() {
 			message += "\n\n" + text.NeedKey()
 		}
 		s.send(ctx, msg.Chat.ID, message)
 	case "/help":
+		if scope == session.ScopeGroup {
+			s.send(ctx, msg.Chat.ID, text.GroupHelp(s.botUsername))
+			return
+		}
 		s.send(ctx, msg.Chat.ID, text.Help())
 	case "/status":
-		s.handleStatus(ctx, msg.Chat.ID, usr, sess)
+		s.handleStatus(ctx, msg.Chat.ID, usr, sess, scope)
 	case "/reset":
-		s.handleReset(ctx, msg.Chat.ID, usr)
+		s.handleReset(ctx, msg.Chat.ID, sess)
 	case "/cancel":
 		s.send(ctx, msg.Chat.ID, "已取消待处理操作。")
+	case "/new":
+		s.handleNewSession(ctx, msg.Chat.ID, usr, args)
+	case "/sessions":
+		s.handleSessionList(ctx, msg.Chat.ID, usr, sess)
+	case "/switch":
+		s.handleSessionSwitch(ctx, msg.Chat.ID, usr, args)
+	case "/rename":
+		s.handleSessionRename(ctx, msg.Chat.ID, usr, args)
+	case "/delete":
+		s.handleSessionDelete(ctx, msg.Chat.ID, usr, args)
 	case "/key":
 		if strings.EqualFold(strings.TrimSpace(args), "delete") {
 			s.handleKeyDelete(ctx, msg.Chat.ID, usr)
@@ -256,21 +307,28 @@ func (s *Service) handle(ctx context.Context, update *models.Update) {
 			s.send(ctx, msg.Chat.ID, text.NeedSymbol())
 			return
 		}
-		s.handleAnalyze(ctx, msg.Chat.ID, usr, sess, args)
+		s.handleAnalyze(ctx, msg.Chat.ID, usr, sess, args, scope)
 	case "":
-		if looksLikeSymbol(raw) && !s.isFollowUp(raw, sess) {
-			s.handleAnalyze(ctx, msg.Chat.ID, usr, sess, raw)
+		query := raw
+		if scope == session.ScopeGroup {
+			query = s.stripBotMention(raw)
+		}
+		if strings.TrimSpace(query) == "" {
 			return
 		}
-		s.handleFollowUp(ctx, msg.Chat.ID, usr, sess, raw)
+		if looksLikeSymbol(query) && !s.isFollowUp(query, sess) {
+			s.handleAnalyze(ctx, msg.Chat.ID, usr, sess, query, scope)
+			return
+		}
+		s.handleFollowUp(ctx, msg.Chat.ID, usr, sess, query, scope)
 	default:
 		s.send(ctx, msg.Chat.ID, text.UnknownCommand())
 	}
 }
 
-func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.User, sess *session.Session, query string) {
+func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.User, sess *session.Session, query string, scope session.Scope) {
 	if !usr.HasKey() {
-		s.send(ctx, chatID, text.NeedKey())
+		s.send(ctx, chatID, s.needKeyMessage(scope))
 		return
 	}
 	if s.analyzer == nil {
@@ -286,7 +344,7 @@ func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.Use
 
 	if sess == nil {
 		var err error
-		sess, err = s.ensureSession(ctx, usr, chatID)
+		sess, err = s.ensureSession(ctx, usr, chatID, scope)
 		if err != nil {
 			s.logger.Warn("读取会话失败，分析继续但不保存上下文", "chat", logging.HashID(chatID), "error", err)
 		}
@@ -350,13 +408,13 @@ func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.Use
 	s.send(ctx, chatID, card)
 }
 
-func (s *Service) handleFollowUp(ctx context.Context, chatID int64, usr *user.User, sess *session.Session, question string) {
+func (s *Service) handleFollowUp(ctx context.Context, chatID int64, usr *user.User, sess *session.Session, question string, scope session.Scope) {
 	if sess == nil || sess.LastAnalysisJSON == "" {
 		s.send(ctx, chatID, text.FollowUpNeedAnalysis())
 		return
 	}
 	if !usr.HasKey() {
-		s.send(ctx, chatID, text.NeedKey())
+		s.send(ctx, chatID, s.needKeyMessage(scope))
 		return
 	}
 	if s.analyzer == nil {
@@ -451,23 +509,220 @@ func (s *Service) handleFollowUp(ctx context.Context, chatID int64, usr *user.Us
 	s.send(ctx, chatID, render.EscapeHTML(result.Content))
 }
 
-func (s *Service) handleReset(ctx context.Context, chatID int64, usr *user.User) {
-	if s.sessions != nil && usr.ID != 0 {
-		if _, err := s.sessions.Reset(ctx, usr.ID, chatID); err != nil {
+func (s *Service) handleReset(ctx context.Context, chatID int64, sess *session.Session) {
+	if s.sessions != nil && sess != nil {
+		if _, err := s.sessions.Reset(ctx, sess.ID); err != nil && !errors.Is(err, session.ErrNotFound) {
 			s.logger.Warn("重置会话失败", "chat", logging.HashID(chatID), "error", err)
 		}
 	}
 	s.send(ctx, chatID, text.Reset())
 }
 
-func (s *Service) ensureSession(ctx context.Context, usr *user.User, chatID int64) (*session.Session, error) {
+func (s *Service) ensureSession(ctx context.Context, usr *user.User, chatID int64, scope session.Scope) (*session.Session, error) {
 	if s.sessions == nil {
 		return nil, nil
 	}
 	if usr == nil || usr.ID == 0 {
 		return nil, errors.New("用户尚未持久化")
 	}
-	return s.sessions.GetOrCreateSession(ctx, usr.ID, chatID)
+	if scope == session.ScopeGroup {
+		return s.sessions.GetOrCreateGroup(ctx, usr.ID, chatID)
+	}
+	return s.sessions.GetOrCreateActivePrivate(ctx, usr.ID, chatID)
+}
+
+func (s *Service) handleNewSession(ctx context.Context, chatID int64, usr *user.User, args string) {
+	if s.sessions == nil || usr == nil || usr.ID == 0 {
+		s.send(ctx, chatID, text.Unavailable("会话管理"))
+		return
+	}
+	title, ok := normalizeTitleInput(args)
+	if !ok {
+		s.send(ctx, chatID, text.SessionTitleTooLong(session.MaxTitleLength))
+		return
+	}
+	sess, err := s.sessions.CreatePrivate(ctx, usr.ID, chatID, title)
+	if err != nil {
+		if errors.Is(err, session.ErrLimitReached) {
+			s.send(ctx, chatID, text.SessionLimitReached(s.maxPrivateSessions()))
+			return
+		}
+		s.logger.Error("创建会话失败", "chat", logging.HashID(chatID), "error", err)
+		s.send(ctx, chatID, text.GenericError())
+		return
+	}
+	s.send(ctx, chatID, text.SessionCreated(sess.ID, sess.Title))
+}
+
+func (s *Service) handleSessionList(ctx context.Context, chatID int64, usr *user.User, active *session.Session) {
+	if s.sessions == nil || usr == nil || usr.ID == 0 {
+		s.send(ctx, chatID, text.Unavailable("会话管理"))
+		return
+	}
+	list, err := s.sessions.ListPrivate(ctx, usr.ID, chatID)
+	if err != nil {
+		s.logger.Error("读取会话列表失败", "chat", logging.HashID(chatID), "error", err)
+		s.send(ctx, chatID, text.GenericError())
+		return
+	}
+	items := make([]text.SessionItem, 0, len(list))
+	for _, sess := range list {
+		items = append(items, text.SessionItem{ID: sess.ID, Title: sess.Title})
+		if len(items) >= s.maxPrivateSessions() {
+			break
+		}
+	}
+	activeID := int64(0)
+	if active != nil {
+		activeID = active.ID
+	}
+	s.send(ctx, chatID, text.SessionList(items, activeID, len(list)))
+}
+
+func (s *Service) handleSessionSwitch(ctx context.Context, chatID int64, usr *user.User, args string) {
+	sessionID, ok := parseSessionID(args)
+	if !ok {
+		s.send(ctx, chatID, text.SessionUsage("/switch"))
+		return
+	}
+	if s.sessions == nil || usr == nil || usr.ID == 0 {
+		s.send(ctx, chatID, text.Unavailable("会话管理"))
+		return
+	}
+	if err := s.sessions.SetActivePrivate(ctx, usr.ID, chatID, sessionID); err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			s.send(ctx, chatID, text.SessionNotFound())
+			return
+		}
+		s.logger.Error("切换会话失败", "chat", logging.HashID(chatID), "error", err)
+		s.send(ctx, chatID, text.GenericError())
+		return
+	}
+	sess, err := s.sessions.GetPrivate(ctx, usr.ID, chatID, sessionID)
+	if err != nil {
+		s.send(ctx, chatID, text.SessionNotFound())
+		return
+	}
+	s.send(ctx, chatID, text.SessionSwitched(sess.ID, sess.Title))
+}
+
+func (s *Service) handleSessionRename(ctx context.Context, chatID int64, usr *user.User, args string) {
+	trimmed := strings.TrimSpace(args)
+	index := strings.IndexFunc(trimmed, unicode.IsSpace)
+	if index <= 0 {
+		s.send(ctx, chatID, text.SessionUsage("/rename"))
+		return
+	}
+	sessionID, ok := parseSessionID(trimmed[:index])
+	if !ok {
+		s.send(ctx, chatID, text.SessionUsage("/rename"))
+		return
+	}
+	title, titleOK := normalizeTitleInput(trimmed[index+1:])
+	if !titleOK || title == "" {
+		if !titleOK {
+			s.send(ctx, chatID, text.SessionTitleTooLong(session.MaxTitleLength))
+			return
+		}
+		s.send(ctx, chatID, text.SessionUsage("/rename"))
+		return
+	}
+	if s.sessions == nil || usr == nil || usr.ID == 0 {
+		s.send(ctx, chatID, text.Unavailable("会话管理"))
+		return
+	}
+	if err := s.sessions.RenamePrivate(ctx, usr.ID, chatID, sessionID, title); err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			s.send(ctx, chatID, text.SessionNotFound())
+			return
+		}
+		if errors.Is(err, session.ErrTitleRequired) {
+			s.send(ctx, chatID, text.SessionUsage("/rename"))
+			return
+		}
+		s.logger.Error("重命名会话失败", "chat", logging.HashID(chatID), "error", err)
+		s.send(ctx, chatID, text.GenericError())
+		return
+	}
+	s.send(ctx, chatID, text.SessionRenamed(sessionID, title))
+}
+
+func (s *Service) handleSessionDelete(ctx context.Context, chatID int64, usr *user.User, args string) {
+	fields := strings.Fields(args)
+	sessionID, ok := int64(0), false
+	if len(fields) > 0 {
+		sessionID, ok = parseSessionID(fields[0])
+	}
+	if !ok {
+		s.send(ctx, chatID, text.SessionUsage("/delete"))
+		return
+	}
+	if s.sessions == nil || usr == nil || usr.ID == 0 {
+		s.send(ctx, chatID, text.Unavailable("会话管理"))
+		return
+	}
+	confirmed := len(fields) >= 2 && strings.EqualFold(fields[1], "confirm")
+	if !confirmed {
+		sess, err := s.sessions.GetPrivate(ctx, usr.ID, chatID, sessionID)
+		if err != nil {
+			if errors.Is(err, session.ErrNotFound) {
+				s.send(ctx, chatID, text.SessionNotFound())
+				return
+			}
+			s.logger.Error("读取待删除会话失败", "chat", logging.HashID(chatID), "error", err)
+			s.send(ctx, chatID, text.GenericError())
+			return
+		}
+		s.send(ctx, chatID, text.SessionDeleteConfirm(sess.ID, sess.Title))
+		return
+	}
+	if err := s.sessions.DeletePrivate(ctx, usr.ID, chatID, sessionID); err != nil {
+		switch {
+		case errors.Is(err, session.ErrLastSession):
+			s.send(ctx, chatID, text.SessionLastOne())
+		case errors.Is(err, session.ErrNotFound):
+			s.send(ctx, chatID, text.SessionNotFound())
+		default:
+			s.logger.Error("删除会话失败", "chat", logging.HashID(chatID), "error", err)
+			s.send(ctx, chatID, text.GenericError())
+		}
+		return
+	}
+	s.send(ctx, chatID, text.SessionDeleted(sessionID))
+}
+
+func parseSessionID(raw string) (int64, bool) {
+	value := strings.TrimSpace(raw)
+	if value == "" || strings.ContainsAny(value, " \t\r\n") {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
+
+func normalizeTitleInput(raw string) (string, bool) {
+	title := strings.Join(strings.Fields(raw), " ")
+	if len([]rune(title)) > session.MaxTitleLength {
+		return "", false
+	}
+	return title, true
+}
+
+func (s *Service) needKeyMessage(scope session.Scope) string {
+	if scope == session.ScopeGroup {
+		return text.NeedKeyInGroup()
+	}
+	return text.NeedKey()
+}
+
+func (s *Service) maxPrivateSessions() int {
+	if s.cfg.MaxPrivateSessions > 0 {
+		return s.cfg.MaxPrivateSessions
+	}
+	return session.MaxPrivateSessions
 }
 
 func (s *Service) isFollowUp(raw string, sess *session.Session) bool {
@@ -548,7 +803,12 @@ func (s *Service) ensureUser(ctx context.Context, msg *models.Message) (*user.Us
 	return s.store.GetOrCreate(ctx, userID, username, s.cfg.OpenAIBaseURL, s.cfg.DefaultMode)
 }
 
-func (s *Service) handleStatus(ctx context.Context, chatID int64, usr *user.User, sess *session.Session) {
+func (s *Service) handleStatus(ctx context.Context, chatID int64, usr *user.User, sess *session.Session, scope session.Scope) {
+	if scope == session.ScopeGroup {
+		s.handleGroupStatus(ctx, chatID, usr, sess)
+		return
+	}
+
 	key := "未配置"
 	if usr.HasKey() {
 		plaintext, err := s.decryptKey(usr)
@@ -582,8 +842,36 @@ func (s *Service) handleStatus(ctx context.Context, chatID int64, usr *user.User
 		endpoint,
 		time.Since(s.started),
 	)
-	if sess != nil && sess.CurrentSymbol != "" {
-		message += fmt.Sprintf("\n当前标的：<code>%s</code>", render.EscapeHTML(sess.CurrentSymbol))
+	if sess != nil {
+		message += fmt.Sprintf("\n当前会话：#%d <b>%s</b>", sess.ID, render.EscapeHTML(sess.Title))
+		if sess.CurrentSymbol != "" {
+			message += fmt.Sprintf("\n当前标的：<code>%s</code>", render.EscapeHTML(sess.CurrentSymbol))
+		}
+	}
+	if s.usage != nil && usr.ID != 0 {
+		if summary, err := s.usage.Today(ctx, usr.ID); err == nil {
+			message += fmt.Sprintf("\n今日请求：%d\n今日 tokens：%d",
+				summary.Requests, summary.PromptTokens+summary.CompletionTokens)
+		}
+	}
+	s.send(ctx, chatID, message)
+}
+
+func (s *Service) handleGroupStatus(ctx context.Context, chatID int64, usr *user.User, sess *session.Session) {
+	model := usr.Model
+	if model == "" {
+		model = s.cfg.DefaultModel
+	}
+	mode := usr.Mode
+	if mode == "" {
+		mode = s.cfg.DefaultMode
+	}
+	message := text.GroupStatus(s.cfg.InstanceName, model, mode)
+	if sess != nil {
+		message += fmt.Sprintf("\n当前会话：<b>%s</b>", render.EscapeHTML(sess.Title))
+		if sess.CurrentSymbol != "" {
+			message += fmt.Sprintf("\n当前标的：<code>%s</code>", render.EscapeHTML(sess.CurrentSymbol))
+		}
 	}
 	if s.usage != nil && usr.ID != 0 {
 		if summary, err := s.usage.Today(ctx, usr.ID); err == nil {
@@ -968,6 +1256,84 @@ func reason(err error) string {
 		return "上游响应超时，请稍后再试"
 	}
 	return "请检查地址和 Key 是否正确"
+}
+
+func scopeForChat(chatType models.ChatType) session.Scope {
+	if chatType == models.ChatTypeGroup || chatType == models.ChatTypeSupergroup {
+		return session.ScopeGroup
+	}
+	return session.ScopePrivate
+}
+
+func privateOnlyCommand(command string) bool {
+	switch command {
+	case "/key", "/baseurl", "/model", "/mode", "/new", "/sessions", "/switch", "/rename", "/delete":
+		return true
+	default:
+		return false
+	}
+}
+
+// groupAddressed 判断群消息是否明确指向本 Bot。
+// 命令（Telegram 只会把发给 Bot 的命令投递过来）以及 @提及、回复 Bot 都算。
+func (s *Service) groupAddressed(msg *models.Message) bool {
+	if msg.ReplyToMessage != nil && msg.ReplyToMessage.From != nil {
+		from := msg.ReplyToMessage.From
+		if s.botID != 0 && from.ID == s.botID {
+			return true
+		}
+		if s.botUsername != "" && strings.EqualFold(from.Username, s.botUsername) {
+			return true
+		}
+	}
+
+	textValue := strings.TrimSpace(msg.Text)
+	fields := strings.Fields(textValue)
+	if len(fields) == 0 {
+		return false
+	}
+	first := fields[0]
+	if strings.HasPrefix(first, "/") {
+		if index := strings.Index(first, "@"); index >= 0 {
+			target := strings.Trim(first[index+1:], ",，:：")
+			return s.botUsername != "" && strings.EqualFold(target, s.botUsername)
+		}
+		return true
+	}
+	return s.hasBotMention(textValue)
+}
+
+func (s *Service) hasBotMention(value string) bool {
+	if s.botUsername == "" {
+		return false
+	}
+	for _, field := range strings.Fields(value) {
+		if s.isBotMentionToken(field) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) isBotMentionToken(token string) bool {
+	if s.botUsername == "" {
+		return false
+	}
+	token = strings.Trim(token, " \t\r\n,，.。:：;；!！?？、")
+	token = strings.TrimPrefix(token, "@")
+	return strings.EqualFold(token, s.botUsername)
+}
+
+func (s *Service) stripBotMention(value string) string {
+	fields := strings.Fields(value)
+	kept := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if s.isBotMentionToken(field) {
+			continue
+		}
+		kept = append(kept, field)
+	}
+	return strings.Join(kept, " ")
 }
 
 // parseCommand 解析 /cmd@BotName args 形式的文本。

@@ -1,6 +1,7 @@
 # 会话模型技术设计
 
-> 目标：私聊支持多会话管理；群组按“每个成员一条会话”隔离。本文只做设计，不包含实现。
+> 目标：私聊支持多会话管理；群组按“每个成员一条会话”隔离。
+> 状态：Phase A/B 已实现并部署到 prod/staging（迁移 `0002_sessions_scope.sql`、会话仓储、私聊多会话命令和群组按成员隔离）。两套环境均已设置 `GROUPS_ENABLED=true`。
 
 ## 1. 目标与非目标
 
@@ -206,11 +207,11 @@ type Store interface {
 
 群组只响应以下消息：
 
-- `@bot_username` 提及
-- 回复 Bot 的消息
 - 带 `@bot_username` 的命令，例如 `/analyze@GuanLanAI_bot BTC`
+- 回复 Bot 的消息
+- `@bot_username` 提及（仅当 BotFather 关闭 privacy mode，或 Bot 是群管理员时才会投递）
 
-Bot 需要在启动时保存 `GetMe().Username`，用于提及判断。建议 BotFather 保持 privacy mode 开启，只接收命令和提及。
+Bot 需要在启动时保存 `GetMe().Username`，用于提及判断。privacy mode 开启时 Telegram 不会投递普通文本中的 @提及，因此群内默认引导用户使用带用户名的命令或回复 Bot 消息。
 
 群组可用命令：
 

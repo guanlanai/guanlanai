@@ -1,6 +1,6 @@
 # guanlanai
 
-观澜（GuanLanAI）是一个运行在 Telegram 私聊中的 AI 辅助交易机器人，使用 Go 编写。
+观澜（GuanLanAI）是一个运行在 Telegram 私聊和群组中的 AI 辅助交易机器人，使用 Go 编写。
 
 当前项目处于早期阶段：用户使用自己的 API Key（支持 OpenAI 兼容代理地址），输入加密货币代码即可获得交易观点，暂不支持下单，也暂不支持股票。部署目标是一台甲骨文免费 VPS，可同机运行生产与测试 bot。
 
@@ -17,6 +17,8 @@ Phase 3 已部署：Binance USDT 现货行情、多周期技术指标、支撑�
 Phase 4 已部署：会话上下文、分析后追问、自动摘要裁剪、每用户限流、全局 LLM 并发和 usage 记录。
 
 Phase 5 已部署：新增 `guanlanai backup`（SQLite `VACUUM INTO`）、观点长度上限和运维文档；备份命令已在 staging 验证。
+
+会话模型 Phase A/B 已部署到 prod/staging：私聊多会话（`/new`、`/sessions`、`/switch`、`/rename`、`/delete`）和群组按成员隔离会话；镜像 `guanlanai:sessions-v2`，群组通过 `GROUPS_ENABLED=true` 开启。
 
 ## 开发
 

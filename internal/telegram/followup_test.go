@@ -17,11 +17,67 @@ type fakeSessionStore struct {
 	resetCalls int
 }
 
-func (f *fakeSessionStore) GetOrCreateSession(_ context.Context, userID, chatID int64) (*session.Session, error) {
+func (f *fakeSessionStore) ensure(userID, chatID int64) *session.Session {
 	if f.sess == nil {
-		f.sess = &session.Session{ID: 1, UserID: userID, ChatID: chatID}
+		f.sess = &session.Session{ID: 1, UserID: userID, ChatID: chatID, Title: "会话 1"}
 	}
-	return f.sess, nil
+	return f.sess
+}
+
+func (f *fakeSessionStore) GetOrCreateActivePrivate(_ context.Context, userID, chatID int64) (*session.Session, error) {
+	return f.ensure(userID, chatID), nil
+}
+
+func (f *fakeSessionStore) CreatePrivate(_ context.Context, userID, chatID int64, title string) (*session.Session, error) {
+	sess := f.ensure(userID, chatID)
+	if title != "" {
+		sess.Title = title
+	}
+	return sess, nil
+}
+
+func (f *fakeSessionStore) ListPrivate(_ context.Context, _, _ int64) ([]session.Session, error) {
+	return []session.Session{*f.ensure(0, 0)}, nil
+}
+
+func (f *fakeSessionStore) GetPrivate(_ context.Context, _, _, sessionID int64) (*session.Session, error) {
+	sess := f.ensure(0, 0)
+	if sess.ID != sessionID {
+		return nil, session.ErrNotFound
+	}
+	return sess, nil
+}
+
+func (f *fakeSessionStore) SetActivePrivate(_ context.Context, _, _, sessionID int64) error {
+	if f.ensure(0, 0).ID != sessionID {
+		return session.ErrNotFound
+	}
+	return nil
+}
+
+func (f *fakeSessionStore) RenamePrivate(_ context.Context, _, _, sessionID int64, title string) error {
+	sess := f.ensure(0, 0)
+	if sess.ID != sessionID {
+		return session.ErrNotFound
+	}
+	sess.Title = title
+	return nil
+}
+
+func (f *fakeSessionStore) DeletePrivate(_ context.Context, _, _, _ int64) error {
+	return session.ErrLastSession
+}
+
+func (f *fakeSessionStore) GetOrCreateGroup(_ context.Context, userID, chatID int64) (*session.Session, error) {
+	return f.ensure(userID, chatID), nil
+}
+
+func (f *fakeSessionStore) GetByID(_ context.Context, sessionID int64) (*session.Session, error) {
+	sess := f.ensure(0, 0)
+	if sess.ID != sessionID {
+		return nil, session.ErrNotFound
+	}
+	return sess, nil
 }
 
 func (f *fakeSessionStore) AppendMessage(_ context.Context, _ int64, role, content string, tokens int) error {
@@ -52,7 +108,7 @@ func (f *fakeSessionStore) TrimMessages(_ context.Context, _ int64, keep int) er
 	return nil
 }
 
-func (f *fakeSessionStore) Reset(_ context.Context, _ int64, _ int64) (*session.Session, error) {
+func (f *fakeSessionStore) Reset(_ context.Context, _ int64) (*session.Session, error) {
 	f.resetCalls++
 	f.messages = nil
 	f.sess.LastAnalysisJSON = ""
@@ -63,6 +119,8 @@ func (f *fakeSessionStore) Reset(_ context.Context, _ int64, _ int64) (*session.
 func (f *fakeSessionStore) CleanupMessages(_ context.Context, _ time.Time) (int64, error) {
 	return 0, nil
 }
+
+var _ session.Store = (*fakeSessionStore)(nil)
 
 type fakeUsageStore struct {
 	events []usage.Event

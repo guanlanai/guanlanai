@@ -21,7 +21,7 @@
 | 无 Key 不能分析 | ✅ 通过 | `handleAnalyze`/`handleFollowUp` 都要求 `HasKey()` |
 | 服务端 Key 禁用 | ✅ 通过 | prod/staging `ALLOW_SERVER_KEY=false`，`OPENAI_API_KEY` 长度为 0 |
 | 自定义 base_url | ✅ 通过（代码/测试） | 单元测试覆盖 http、私网、回环、云元数据、重定向、响应上限 |
-| 仅私聊 | ✅ 通过 | 非 private chat 直接提示仅支持私聊 |
+| 仅私聊 | ✅ 通过（会话模型 Phase A/B 起支持群组） | Phase 5 时非 private chat 直接提示仅支持私聊；群组支持见 `docs/SESSION_DESIGN.md` |
 | 30 天消息清理 | ✅ 通过（代码） | 每小时 cleanup 任务按 `DATA_RETENTION_DAYS` 删除过期消息 |
 | `/reset` 清空会话 | ✅ 通过 | staging 实测重置后追问提示“没有可追问的分析”，`generation` 递增 |
 | 结构化输出校验 | ✅ 通过 | JSON 解析 + 方向/信心/止损/目标/理由/风险校验；失败修复一次，不展示坏 JSON |

@@ -21,11 +21,13 @@ type Config struct {
 	HTTPAddr     string
 	LogLevel     string
 
-	DataRetentionDays int
-	DefaultMode       string
-	DefaultModel      string
-	ModelAllowlist    []string
-	StrictModelList   bool
+	DataRetentionDays  int
+	MaxPrivateSessions int
+	GroupsEnabled      bool
+	DefaultMode        string
+	DefaultModel       string
+	ModelAllowlist     []string
+	StrictModelList    bool
 
 	OpenAIBaseURL   string
 	OpenAIServerKey string
@@ -88,6 +90,12 @@ func Load() (Config, error) {
 
 	var err error
 	if cfg.DataRetentionDays, err = intEnv("DATA_RETENTION_DAYS", 30); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxPrivateSessions, err = intEnv("MAX_PRIVATE_SESSIONS", 20); err != nil {
+		return Config{}, err
+	}
+	if cfg.GroupsEnabled, err = boolEnv("GROUPS_ENABLED", false); err != nil {
 		return Config{}, err
 	}
 	if cfg.StrictModelList, err = boolEnv("STRICT_MODEL_LIST", true); err != nil {
@@ -197,6 +205,9 @@ func (c Config) validate() error {
 	}
 	if c.DataRetentionDays <= 0 {
 		return errors.New("DATA_RETENTION_DAYS 必须大于 0")
+	}
+	if c.MaxPrivateSessions <= 0 {
+		return errors.New("MAX_PRIVATE_SESSIONS 必须大于 0")
 	}
 	if c.AnalysisRatePerMin <= 0 || c.AnalysisRatePerHour <= 0 || c.ChatRatePerMin <= 0 {
 		return errors.New("限流配置必须大于 0")

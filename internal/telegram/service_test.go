@@ -112,19 +112,20 @@ func TestHandleAnalyzeWithoutSymbol(t *testing.T) {
 	}
 }
 
-func TestGroupChatRejected(t *testing.T) {
+func TestGroupDisabledIgnoresMessages(t *testing.T) {
 	sender := &fakeSender{}
 	service := newTestService(sender)
 
 	service.onUpdate(context.Background(), nil, &models.Update{
 		Message: &models.Message{
-			Text: "BTC",
+			Text: "@GuanLanAI_bot BTC",
 			Chat: models.Chat{ID: 2, Type: models.ChatTypeGroup},
+			From: &models.User{ID: 3, Username: "alice"},
 		},
 	})
 
-	if !strings.Contains(sender.last().Text, "私聊") {
-		t.Fatalf("回复 = %q", sender.last().Text)
+	if sender.count() != 0 {
+		t.Fatalf("GROUPS_ENABLED=false 时不应回复，实际 = %q", sender.last().Text)
 	}
 }
 

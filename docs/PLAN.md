@@ -27,7 +27,7 @@
 - 不做真实交易、不接交易所私有 API、不托管用户资金。
 - 不做 USDC 充值/扣费，只保留接口和用量记录。
 - 不做 Web/App、不做多实例、不做复杂管理后台。
-- 不做群组场景，MVP 仅私聊（已确认）。
+- 不做群组共享会话；群组支持按成员隔离，每个成员在同一群固定一条会话。
 - 不承诺收益，不给出“稳赚”“必涨”类表述。
 
 ## 2. 已拍板的技术决策
@@ -42,7 +42,7 @@
 | 行情源 | Binance USDT 现货；默认 `data-api.binance.vision`（当前 VPS 上 `api.binance.com` 返回 451），CoinGecko 兜底为低优先级、暂不实现 |
 | 存储 | 单机 SQLite，驱动用纯 Go 的 `modernc.org/sqlite`，避免 CGO |
 | 用户 Key | AES-256-GCM 加密后存 SQLite；收到 Key 后删除 Telegram 消息 |
-| 会话 | 仅私聊；消息默认保留 30 天；`/reset` 立即删除 |
+| 会话 | 私聊支持多会话；群组按成员隔离；消息默认保留 30 天；`/reset` 立即删除 |
 | 部署 | 甲骨文免费 VPS 单机 + Docker Compose + volume；可同机再跑一套测试 bot |
 | 镜像 | 支持 `linux/amd64` 与 `linux/arm64`（Oracle Ampere），或按 VPS 架构单独构建 |
 | 环境隔离 | 生产/测试独立 `.env`、SQLite、主密钥、volume、compose project，不共享端口和密钥 |
@@ -492,7 +492,9 @@ type Request struct {
 
 > 私聊多会话/群组按用户隔离的详细设计见 `docs/SESSION_DESIGN.md`。
 
-- 以 Telegram 私聊 `chat_id` 为主键，一个 chat 一个会话。
+- 私聊：`user_id + chat_id` 下可有多条会话，由 `chat_state` 指向 active。
+- 群组：`user_id + chat_id + scope='group'` 固定一条，不同成员互相隔离。
+- 群组消息只处理 `@Bot` 提及、回复 Bot 和明确的命令，未提及消息不存储。
 - 保存最近消息、会话摘要、当前标的、最近一次结构化观点。
 - 预算：上下文使用超过 60% 时触发摘要；保留最近 8–10 轮 + 摘要 + 最近观点。
 - 摘要用便宜模型，限 300 tokens；失败则直接裁剪最旧消息，不阻断主流程。
@@ -580,6 +582,8 @@ DEFAULT_MODE=swing
 LOG_LEVEL=info
 HTTP_ADDR=:8080
 DATA_RETENTION_DAYS=30
+MAX_PRIVATE_SESSIONS=20
+GROUPS_ENABLED=false
 ANALYSIS_RATE_PER_MIN=6
 ANALYSIS_RATE_PER_HOUR=30
 CHAT_RATE_PER_MIN=20
@@ -753,7 +757,7 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 - [ ] Key 加密存储；消息删除；日志无明文；`/status` 只显示掩码。
 - [ ] 无 Key 时不能分析；服务端 Key 在生产默认禁用。
 - [ ] 自定义 `base_url` 可用（OpenAI 兼容代理）；http/私网/回环/云元数据/重定向被拒绝；响应大小和超时受限。
-- [ ] 仅私聊可用；用户消息默认 30 天清理；`/reset` 立即删除。
+- [ ] 私聊和群组可用；群组按成员隔离；用户消息默认 30 天清理；`/reset` 立即删除。
 - [ ] 结构化输出通过校验；失败有降级，不展示坏 JSON。
 - [ ] 每次观点都有数据时间、来源、风险提示、失效条件。
 - [ ] 追问能继承标的和最近观点；`/reset` 彻底清空。
@@ -790,7 +794,7 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 
 ## 18. 暂缓与未来路线
 
-- **P1（MVP 后）**：流式回复、更多 OpenAI 兼容厂商、自选列表/定时早报、新闻摘要、群组支持、Prometheus 指标、管理后台。
+- **P1（MVP 后）**：流式回复、更多 OpenAI 兼容厂商、自选列表/定时早报、新闻摘要、Prometheus 指标、管理后台。
 - **P2**：USDC 充值（链选择、充值地址、链上监听、账本、配额）、订阅/次数包、推荐返利。
 - **P3**：交易所只读持仓 → 模拟盘 → 小额实盘；优先 Binance/Gate；真实下单必须二次确认、限额、kill switch。
 - **P4**：回测、策略对比、组合分析；仍不接 A 股。
@@ -811,7 +815,7 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 
 ## 20. 需要你后续拍板的问题
 
-已确认：MVP 仅私聊；支持每用户 OpenAI 兼容 `base_url`；消息保留 30 天；暂不专门做合规审查；VPS 为 Oracle A1.Flex `arm64`、region `iad`，Docker 待安装。
+已确认：支持私聊多会话和群组按成员隔离；支持每用户 OpenAI 兼容 `base_url`；消息保留 30 天；暂不专门做合规审查；VPS 为 Oracle A1.Flex `arm64`、region `iad`，Docker 待安装。
 
 剩余问题（不阻塞 Phase 0–2，可在对应阶段前确认）：
 

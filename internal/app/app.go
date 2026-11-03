@@ -36,7 +36,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("执行数据库迁移: %w", err)
 	}
 
-	store := sqlite.NewStore(db)
+	store := sqlite.NewStore(db, sqlite.WithMaxPrivateSessions(cfg.MaxPrivateSessions))
 
 	var keyCipher secrets.Cipher
 	if cfg.MasterKey != "" {
