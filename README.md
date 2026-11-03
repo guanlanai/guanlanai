@@ -24,6 +24,8 @@ Phase 5 已部署：新增 `guanlanai backup`（SQLite `VACUUM INTO`）、观点
 
 Agent 能力已增强：追问支持最多 3 轮只读工具调用（行情快照、技术分析、代码解析），分析输出优先使用 JSON Schema 并保留本地校验兜底，追问支持 Telegram 流式编辑；每个请求带 `trace_id`，并新增固定 fixture 的 golden-case 回归测试。对应配置为 `AGENT_MAX_TOOL_ROUNDS` 和 `LLM_STREAMING`。
 
+安全加固已部署到 prod/staging：镜像 `guanlanai:guardrails-v1`，包含提示词注入防护、不可信内容分隔、工具调用/输入预算和日志脱敏；后续 P1 清单见 [docs/SECURITY.md](docs/SECURITY.md)。
+
 ## 开发
 
 ```sh
