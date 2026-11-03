@@ -27,7 +27,7 @@ func (fakeResolver) Resolve(_ context.Context, query string) (market.Symbol, err
 
 type fakeProvider struct{}
 
-func (fakeProvider) Snapshot(_ context.Context, symbol market.Symbol, _ []string) (*market.Snapshot, error) {
+func (fakeProvider) Snapshot(_ context.Context, symbol market.Symbol, timeframes []market.Timeframe) (*market.Snapshot, error) {
 	candles := make([]market.Candle, 300)
 	for i := range candles {
 		price := 100 + float64(i)
@@ -40,13 +40,21 @@ func (fakeProvider) Snapshot(_ context.Context, symbol market.Symbol, _ []string
 			Volume:   1000,
 		}
 	}
+	series := make(map[market.Timeframe]market.Series, len(timeframes))
+	for _, timeframe := range timeframes {
+		series[timeframe] = market.Series{
+			Timeframe: timeframe,
+			Candles:   candles,
+			AsOf:      candles[len(candles)-1].OpenTime,
+		}
+	}
 	return &market.Snapshot{
-		Symbol:     symbol,
-		Price:      399,
-		ChangePct:  1.2,
-		Timeframes: map[string][]market.Candle{"1h": candles},
-		FetchedAt:  time.Now().UTC(),
-		Source:     "test",
+		Symbol:    symbol,
+		Price:     399,
+		ChangePct: 1.2,
+		Series:    series,
+		FetchedAt: time.Now().UTC(),
+		Source:    "test",
 	}, nil
 }
 
@@ -98,7 +106,7 @@ func TestAnalyze(t *testing.T) {
 	completer := &fakeCompleter{responses: []string{validOpinion()}}
 	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, 4, testLogger())
 
-	result, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing")
+	result, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing", analysis.StrategySingle, market.TF1D, analysis.DefaultIndicators(), 0)
 	if err != nil {
 		t.Fatalf("Analyze() error = %v", err)
 	}
@@ -108,8 +116,119 @@ func TestAnalyze(t *testing.T) {
 	if result.Report.Pair != "BTCUSDT" || result.Report.Source != "test" {
 		t.Fatalf("report = %#v", result.Report)
 	}
+	if len(result.Report.Screens) != 1 || result.Report.Screens[0].Timeframe != "1D" {
+		t.Fatalf("report screens = %#v", result.Report.Screens)
+	}
 	if completer.calls != 1 || !completer.requests[0].JSONMode {
 		t.Fatalf("completer = %#v", completer)
+	}
+}
+
+func TestAnalyzeUsesRequestedTimeframe(t *testing.T) {
+	completer := &fakeCompleter{responses: []string{validOpinion()}}
+	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, 4, testLogger())
+
+	result, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing", analysis.StrategySingle, market.TF4h, analysis.DefaultIndicators(), 0)
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	if len(result.Report.Screens) != 1 || result.Report.Screens[0].Timeframe != "4h" {
+		t.Fatalf("report screens = %#v", result.Report.Screens)
+	}
+}
+
+type countingProvider struct {
+	calls      int
+	timeframes []market.Timeframe
+}
+
+func (p *countingProvider) Snapshot(_ context.Context, symbol market.Symbol, timeframes []market.Timeframe) (*market.Snapshot, error) {
+	p.calls++
+	p.timeframes = append([]market.Timeframe(nil), timeframes...)
+	candles := make([]market.Candle, 300)
+	for i := range candles {
+		price := 100 + float64(i)
+		candles[i] = market.Candle{
+			OpenTime: time.Unix(int64(i*3600), 0).UTC(),
+			Open:     price,
+			High:     price + 1,
+			Low:      price - 1,
+			Close:    price,
+			Volume:   1000,
+		}
+	}
+	series := make(map[market.Timeframe]market.Series, len(timeframes))
+	for _, timeframe := range timeframes {
+		series[timeframe] = market.Series{Timeframe: timeframe, Candles: candles, AsOf: candles[len(candles)-1].OpenTime}
+	}
+	return &market.Snapshot{
+		Symbol:    symbol,
+		Price:     399,
+		ChangePct: 1.2,
+		Series:    series,
+		FetchedAt: time.Now().UTC(),
+		Source:    "test",
+	}, nil
+}
+
+func TestAnalyzeReusesSessionSnapshot(t *testing.T) {
+	completer := &fakeCompleter{responses: []string{validOpinion(), validOpinion()}}
+	provider := &countingProvider{}
+	service := New(fakeResolver{}, provider, completer, "", 1200, 4, testLogger())
+
+	if _, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing", analysis.StrategySingle, market.TF1D, analysis.DefaultIndicators(), 7); err != nil {
+		t.Fatalf("第一次 Analyze() error = %v", err)
+	}
+	if _, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing", analysis.StrategySingle, market.TF1D, analysis.DefaultIndicators(), 7); err != nil {
+		t.Fatalf("第二次 Analyze() error = %v", err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("同一会话应复用快照，provider 调用 = %d, want 1", provider.calls)
+	}
+}
+
+func TestAnalyzeDoesNotShareSnapshotAcrossSessions(t *testing.T) {
+	completer := &fakeCompleter{responses: []string{validOpinion(), validOpinion()}}
+	provider := &countingProvider{}
+	service := New(fakeResolver{}, provider, completer, "", 1200, 4, testLogger())
+
+	if _, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing", analysis.StrategySingle, market.TF1D, analysis.DefaultIndicators(), 1); err != nil {
+		t.Fatalf("第一次 Analyze() error = %v", err)
+	}
+	if _, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing", analysis.StrategySingle, market.TF1D, analysis.DefaultIndicators(), 2); err != nil {
+		t.Fatalf("第二次 Analyze() error = %v", err)
+	}
+	if provider.calls != 2 {
+		t.Fatalf("不同会话不应共享快照，provider 调用 = %d, want 2", provider.calls)
+	}
+}
+
+func TestAnalyzeTripleScreenReusesSnapshot(t *testing.T) {
+	completer := &fakeCompleter{responses: []string{validOpinion(), validOpinion()}}
+	provider := &countingProvider{}
+	service := New(fakeResolver{}, provider, completer, "", 1200, 4, testLogger())
+
+	result, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing",
+		analysis.StrategyTripleScreen, market.TF4h, analysis.DefaultIndicators(), 9)
+	if err != nil {
+		t.Fatalf("第一次 Analyze() error = %v", err)
+	}
+	if len(provider.timeframes) != 3 ||
+		provider.timeframes[0] != market.TF1W ||
+		provider.timeframes[1] != market.TF1D ||
+		provider.timeframes[2] != market.TF1h {
+		t.Fatalf("请求周期 = %#v", provider.timeframes)
+	}
+	if result.Report.Strategy != "triple_screen" || len(result.Report.Screens) != 3 {
+		t.Fatalf("report = %#v", result.Report)
+	}
+
+	if _, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing",
+		analysis.StrategyTripleScreen, market.TF4h, []analysis.Indicator{analysis.IndicatorRSI}, 9); err != nil {
+		t.Fatalf("第二次 Analyze() error = %v", err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("三重滤网应复用快照，provider 调用 = %d", provider.calls)
 	}
 }
 
@@ -117,7 +236,7 @@ func TestAnalyzeRetriesInvalidOutput(t *testing.T) {
 	completer := &fakeCompleter{responses: []string{`{"bad":true}`, validOpinion()}}
 	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, 4, testLogger())
 
-	result, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing")
+	result, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing", analysis.StrategySingle, market.TF1D, analysis.DefaultIndicators(), 0)
 	if err != nil {
 		t.Fatalf("Analyze() error = %v", err)
 	}
@@ -158,7 +277,7 @@ func TestAnalyzeInvalidOutput(t *testing.T) {
 	completer := &fakeCompleter{responses: []string{`{"bad":true}`, `{"bad":true}`}}
 	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, 4, testLogger())
 
-	_, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing")
+	_, err := service.Analyze(context.Background(), testUser(), "sk-test", "BTC", "swing", analysis.StrategySingle, market.TF1D, analysis.DefaultIndicators(), 0)
 	if !errors.Is(err, ErrInvalidOutput) {
 		t.Fatalf("Analyze() error = %v, want ErrInvalidOutput", err)
 	}
@@ -169,7 +288,7 @@ func TestAnalyzeNoModel(t *testing.T) {
 	usr.Model = ""
 	service := New(fakeResolver{}, fakeProvider{}, &fakeCompleter{}, "", 1200, 4, testLogger())
 
-	_, err := service.Analyze(context.Background(), usr, "sk-test", "BTC", "swing")
+	_, err := service.Analyze(context.Background(), usr, "sk-test", "BTC", "swing", analysis.StrategySingle, market.TF1D, analysis.DefaultIndicators(), 0)
 	if !errors.Is(err, ErrNoModel) {
 		t.Fatalf("Analyze() error = %v, want ErrNoModel", err)
 	}

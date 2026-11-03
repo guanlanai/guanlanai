@@ -1,6 +1,7 @@
 package binance
 
 import (
+	"container/list"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,7 +17,10 @@ import (
 	"github.com/guanlanai/guanlanai/internal/resilience"
 )
 
-const maxResponseBytes = 8 * 1024 * 1024
+const (
+	maxResponseBytes = 8 * 1024 * 1024
+	maxCacheEntries  = 1000
+)
 
 // Client 是 Binance 现货行情适配器，支持主备 base URL。
 type Client struct {
@@ -26,10 +30,12 @@ type Client struct {
 	breaker  *resilience.Breaker
 
 	cacheMu sync.Mutex
-	cache   map[string]cacheEntry
+	cache   map[string]*list.Element
+	order   *list.List
 }
 
 type cacheEntry struct {
+	key     string
 	expires time.Time
 	value   any
 }
@@ -66,7 +72,8 @@ func NewClient(primary, fallback string, timeout time.Duration) *Client {
 			Timeout: timeout,
 		},
 		breaker: resilience.New(5, 30*time.Second),
-		cache:   make(map[string]cacheEntry),
+		cache:   make(map[string]*list.Element),
+		order:   list.New(),
 	}
 }
 
@@ -151,10 +158,33 @@ func isLeveragedToken(base string) bool {
 	return false
 }
 
-// Snapshot 拉取价格、24h 涨跌和多周期 K 线。
-func (c *Client) Snapshot(ctx context.Context, symbol market.Symbol, timeframes []string) (*market.Snapshot, error) {
+// intervalByTimeframe 只在本适配器内把标准周期映射成 Binance interval。
+var intervalByTimeframe = map[market.Timeframe]string{
+	market.TF1m:  "1m",
+	market.TF5m:  "5m",
+	market.TF15m: "15m",
+	market.TF30m: "30m",
+	market.TF1h:  "1h",
+	market.TF2h:  "2h",
+	market.TF4h:  "4h",
+	market.TF6h:  "6h",
+	market.TF12h: "12h",
+	market.TF1D:  "1d",
+	market.TF1W:  "1w",
+	market.TF1M:  "1M",
+}
+
+func intervalFor(timeframe market.Timeframe) (string, error) {
+	if interval, ok := intervalByTimeframe[timeframe]; ok {
+		return interval, nil
+	}
+	return "", fmt.Errorf("%w: %q", market.ErrInvalidTimeframe, timeframe)
+}
+
+// Snapshot 拉取价格、24h 涨跌和所需周期的 K 线。
+func (c *Client) Snapshot(ctx context.Context, symbol market.Symbol, timeframes []market.Timeframe) (*market.Snapshot, error) {
 	if len(timeframes) == 0 {
-		timeframes = market.TimeframesForMode("swing")
+		timeframes = []market.Timeframe{market.DefaultTimeframe}
 	}
 
 	ticker, err := c.ticker24h(ctx, symbol.Pair)
@@ -163,31 +193,69 @@ func (c *Client) Snapshot(ctx context.Context, symbol market.Symbol, timeframes 
 	}
 
 	snapshot := &market.Snapshot{
-		Symbol:     symbol,
-		Price:      ticker.LastPrice,
-		ChangePct:  ticker.ChangePct,
-		Timeframes: make(map[string][]market.Candle, len(timeframes)),
-		FetchedAt:  time.Now().UTC(),
-		Source:     "Binance",
+		Symbol:    symbol,
+		Price:     ticker.LastPrice,
+		ChangePct: ticker.ChangePct,
+		Series:    make(map[market.Timeframe]market.Series, len(timeframes)),
+		FetchedAt: time.Now().UTC(),
+		Source:    "Binance",
 	}
 
-	for _, interval := range timeframes {
-		candles, err := c.klines(ctx, symbol.Pair, interval)
-		if err != nil {
-			return nil, err
-		}
-		if len(candles) == 0 {
-			return nil, fmt.Errorf("%w: %s %s 没有 K 线", market.ErrDataUnavailable, symbol.Pair, interval)
-		}
-		if len(candles) < 200 {
-			snapshot.Partial = true
-		}
-		snapshot.Timeframes[interval] = candles
+	type fetchResult struct {
+		timeframe market.Timeframe
+		candles   []market.Candle
+		err       error
+	}
+	results := make(chan fetchResult, len(timeframes))
+	for _, timeframe := range timeframes {
+		go func(timeframe market.Timeframe) {
+			interval, err := intervalFor(timeframe)
+			if err != nil {
+				results <- fetchResult{timeframe: timeframe, err: err}
+				return
+			}
+			candles, err := c.klines(ctx, symbol.Pair, timeframe, interval)
+			if err == nil && len(candles) == 0 {
+				err = fmt.Errorf("%w: %s %s 没有 K 线", market.ErrDataUnavailable, symbol.Pair, interval)
+			}
+			results <- fetchResult{timeframe: timeframe, candles: candles, err: err}
+		}(timeframe)
 	}
 
+	var firstErr error
+	for range timeframes {
+		result := <-results
+		if result.err != nil {
+			if firstErr == nil {
+				firstErr = result.err
+			}
+			continue
+		}
+		snapshot.Series[result.timeframe] = market.Series{
+			Timeframe: result.timeframe,
+			Candles:   result.candles,
+			Partial:   len(result.candles) < 200,
+			AsOf:      result.candles[len(result.candles)-1].OpenTime,
+		}
+	}
+
+	if len(snapshot.Series) == 0 {
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		return nil, market.ErrDataUnavailable
+	}
 	if snapshot.Price <= 0 {
-		if candles := snapshot.Timeframes[timeframes[0]]; len(candles) > 0 {
-			snapshot.Price = candles[len(candles)-1].Close
+		if series, ok := snapshot.Series[timeframes[0]]; ok && len(series.Candles) > 0 {
+			snapshot.Price = series.Candles[len(series.Candles)-1].Close
+		}
+	}
+	if snapshot.Price <= 0 {
+		for _, series := range snapshot.Series {
+			if len(series.Candles) > 0 {
+				snapshot.Price = series.Candles[len(series.Candles)-1].Close
+				break
+			}
 		}
 	}
 	if snapshot.Price <= 0 {
@@ -228,8 +296,8 @@ func (c *Client) ticker24h(ctx context.Context, pair string) (ticker24h, error) 
 	return result, nil
 }
 
-func (c *Client) klines(ctx context.Context, pair, interval string) ([]market.Candle, error) {
-	key := "klines:" + pair + ":" + interval
+func (c *Client) klines(ctx context.Context, pair string, timeframe market.Timeframe, interval string) ([]market.Candle, error) {
+	key := "klines:" + pair + ":" + timeframe.String()
 	if value, ok := c.cacheGet(key); ok {
 		if result, ok := value.([]market.Candle); ok {
 			return result, nil
@@ -251,6 +319,12 @@ func (c *Client) klines(ctx context.Context, pair, interval string) ([]market.Ca
 		if err != nil {
 			continue
 		}
+		var closeTime time.Time
+		if len(row) > 6 {
+			if closeTimeMillis, err := parseIntRaw(row[6]); err == nil {
+				closeTime = time.UnixMilli(closeTimeMillis).UTC()
+			}
+		}
 		open, err1 := parseFloatRaw(row[1])
 		high, err2 := parseFloatRaw(row[2])
 		low, err3 := parseFloatRaw(row[3])
@@ -260,18 +334,19 @@ func (c *Client) klines(ctx context.Context, pair, interval string) ([]market.Ca
 			continue
 		}
 		candles = append(candles, market.Candle{
-			OpenTime: time.UnixMilli(openTimeMillis).UTC(),
-			Open:     open,
-			High:     high,
-			Low:      low,
-			Close:    closePrice,
-			Volume:   volume,
+			OpenTime:  time.UnixMilli(openTimeMillis).UTC(),
+			CloseTime: closeTime,
+			Open:      open,
+			High:      high,
+			Low:       low,
+			Close:     closePrice,
+			Volume:    volume,
 		})
 	}
 	if len(candles) == 0 {
 		return nil, fmt.Errorf("%w: %s %s K 线为空", market.ErrDataUnavailable, pair, interval)
 	}
-	c.cacheSet(key, candles, time.Minute)
+	c.cacheSet(key, candles, market.SeriesTTL(timeframe))
 	return candles, nil
 }
 
@@ -385,20 +460,42 @@ func (c *Client) getJSONOnce(ctx context.Context, path string, out any) error {
 func (c *Client) cacheGet(key string) (any, bool) {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
-	entry, ok := c.cache[key]
-	if !ok || time.Now().After(entry.expires) {
-		if ok {
-			delete(c.cache, key)
-		}
+	element, ok := c.cache[key]
+	if !ok {
 		return nil, false
 	}
+	entry := element.Value.(*cacheEntry)
+	if time.Now().After(entry.expires) {
+		c.order.Remove(element)
+		delete(c.cache, key)
+		return nil, false
+	}
+	c.order.MoveToFront(element)
 	return entry.value, true
 }
 
 func (c *Client) cacheSet(key string, value any, ttl time.Duration) {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
-	c.cache[key] = cacheEntry{expires: time.Now().Add(ttl), value: value}
+
+	if element, ok := c.cache[key]; ok {
+		entry := element.Value.(*cacheEntry)
+		entry.expires = time.Now().Add(ttl)
+		entry.value = value
+		c.order.MoveToFront(element)
+		return
+	}
+	element := c.order.PushFront(&cacheEntry{key: key, expires: time.Now().Add(ttl), value: value})
+	c.cache[key] = element
+	for c.order.Len() > maxCacheEntries {
+		oldest := c.order.Back()
+		if oldest == nil {
+			break
+		}
+		entry := oldest.Value.(*cacheEntry)
+		c.order.Remove(oldest)
+		delete(c.cache, entry.key)
+	}
 }
 
 func parseFloatRaw(raw json.RawMessage) (float64, error) {

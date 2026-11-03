@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"io/fs"
 	"path/filepath"
 	"testing"
@@ -29,15 +30,15 @@ func TestMigrate(t *testing.T) {
 		t.Fatalf("查询表失败: %v", err)
 	}
 	if tableCount != 5 {
-		t.Fatalf("业务表数量 = %d, want 5", tableCount)
+		t.Fatalf("业务表数量 = %d, want 6", tableCount)
 	}
 
 	var migrationCount int
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("查询迁移记录失败: %v", err)
 	}
-	if migrationCount != 2 {
-		t.Fatalf("迁移记录数 = %d, want 2", migrationCount)
+	if migrationCount != 6 {
+		t.Fatalf("迁移记录数 = %d, want 6", migrationCount)
 	}
 
 	if err := Migrate(ctx, db, migrations.FS); err != nil {
@@ -46,8 +47,8 @@ func TestMigrate(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatalf("重复查询迁移记录失败: %v", err)
 	}
-	if migrationCount != 2 {
-		t.Fatalf("重复迁移后记录数 = %d, want 2", migrationCount)
+	if migrationCount != 6 {
+		t.Fatalf("重复迁移后记录数 = %d, want 6", migrationCount)
 	}
 }
 
@@ -132,5 +133,65 @@ INSERT INTO sessions (user_id, chat_id, scope, title) VALUES (1, 900, 'group', '
 	if _, err := db.ExecContext(ctx, `
 INSERT INTO sessions (user_id, chat_id, scope, title) VALUES (1, 900, 'group', 'g2')`); err == nil {
 		t.Fatal("重复的群会话应被 partial unique index 拒绝")
+	}
+
+	if _, err := db.ExecContext(ctx, `UPDATE users SET preferred_timeframe = '4h' WHERE id = 1`); err != nil {
+		t.Fatalf("写入 preferred_timeframe: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE sessions SET current_timeframe = '1D' WHERE id = 1`); err != nil {
+		t.Fatalf("写入 current_timeframe: %v", err)
+	}
+}
+
+func TestMigrate0003PreservesExistingData(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ctx := context.Background()
+
+	first, err := fs.ReadFile(migrations.FS, "0001_init.sql")
+	if err != nil {
+		t.Fatalf("读取 0001: %v", err)
+	}
+	second, err := fs.ReadFile(migrations.FS, "0002_sessions_scope.sql")
+	if err != nil {
+		t.Fatalf("读取 0002: %v", err)
+	}
+	before := fstest.MapFS{
+		"0001_init.sql":           &fstest.MapFile{Data: first},
+		"0002_sessions_scope.sql": &fstest.MapFile{Data: second},
+	}
+	if err := Migrate(ctx, db, before); err != nil {
+		t.Fatalf("执行 0001-0002: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO users (telegram_user_id, username) VALUES (123, 'alice')`); err != nil {
+		t.Fatalf("插入用户: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO sessions (user_id, chat_id, scope, title) VALUES (1, 456, 'private', '会话 1')`); err != nil {
+		t.Fatalf("插入会话: %v", err)
+	}
+
+	if err := Migrate(ctx, db, migrations.FS); err != nil {
+		t.Fatalf("执行 0003: %v", err)
+	}
+
+	var preferred, indicators, strategy, current sql.NullString
+	var risk sql.NullFloat64
+	if err := db.QueryRowContext(ctx,
+		`SELECT preferred_timeframe, preferred_indicators, preferred_strategy, risk_per_trade FROM users WHERE id = 1`).
+		Scan(&preferred, &indicators, &strategy, &risk); err != nil {
+		t.Fatalf("读取用户周期/指标/策略/风险偏好: %v", err)
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT current_timeframe FROM sessions WHERE id = 1`).Scan(&current); err != nil {
+		t.Fatalf("读取 current_timeframe: %v", err)
+	}
+	if preferred.Valid || indicators.Valid || strategy.Valid || current.Valid || risk.Valid {
+		t.Fatalf("旧数据应保持未设置: preferred=%v indicators=%v strategy=%v risk=%v current=%v",
+			preferred, indicators, strategy, risk, current)
 	}
 }

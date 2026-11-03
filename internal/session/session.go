@@ -40,6 +40,7 @@ type Session struct {
 	Title            string
 	CurrentSymbol    string
 	CurrentMarket    string
+	CurrentTimeframe string
 	Summary          string
 	SummaryTokens    int
 	LastAnalysisJSON string
@@ -75,7 +76,7 @@ type Store interface {
 	GetByID(ctx context.Context, sessionID int64) (*Session, error)
 	AppendMessage(ctx context.Context, sessionID int64, role, content string, tokens int) error
 	RecentMessages(ctx context.Context, sessionID int64, limit int) ([]Message, error)
-	SaveAnalysis(ctx context.Context, sessionID int64, symbol, market, analysisJSON string) (*Session, error)
+	SaveAnalysis(ctx context.Context, sessionID int64, symbol, market, timeframe, analysisJSON string) (*Session, error)
 	UpdateSummary(ctx context.Context, sessionID int64, summary string, tokens int) error
 	TrimMessages(ctx context.Context, sessionID int64, keep int) error
 	Reset(ctx context.Context, sessionID int64) (*Session, error)

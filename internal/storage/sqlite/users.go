@@ -32,10 +32,16 @@ func (s *Store) getByTelegramID(ctx context.Context, telegramUserID int64) (*use
 		nonce      []byte
 		keyVersion sql.NullInt64
 		model      sql.NullString
+		timeframe  sql.NullString
+		indicators sql.NullString
+		strategy   sql.NullString
+		risk       sql.NullFloat64
 	)
 	err := s.db.QueryRowContext(ctx, `
 SELECT id, telegram_user_id, username, key_ciphertext, key_nonce, key_version,
-       key_status, api_base_url, model, mode, status
+       key_status, api_base_url, model, mode, COALESCE(preferred_timeframe, ''),
+       COALESCE(preferred_indicators, ''), COALESCE(preferred_strategy, ''),
+       COALESCE(risk_per_trade, 0), status
 FROM users
 WHERE telegram_user_id = ?`, telegramUserID).Scan(
 		&result.ID,
@@ -48,6 +54,10 @@ WHERE telegram_user_id = ?`, telegramUserID).Scan(
 		&result.APIBaseURL,
 		&model,
 		&result.Mode,
+		&timeframe,
+		&indicators,
+		&strategy,
+		&risk,
 		&result.Status,
 	)
 	if err != nil {
@@ -61,6 +71,10 @@ WHERE telegram_user_id = ?`, telegramUserID).Scan(
 		result.KeyVersion = int(keyVersion.Int64)
 	}
 	result.Model = model.String
+	result.PreferredTimeframe = timeframe.String
+	result.PreferredIndicators = indicators.String
+	result.PreferredStrategy = strategy.String
+	result.RiskPerTrade = risk.Float64
 	return &result, nil
 }
 
@@ -124,6 +138,58 @@ SET mode = ?, updated_at = CURRENT_TIMESTAMP
 WHERE telegram_user_id = ?`, mode, telegramUserID)
 	if err != nil {
 		return fmt.Errorf("保存模式: %w", err)
+	}
+	return nil
+}
+
+// UpdateTimeframe 保存用户常用周期；空字符串表示清除偏好，回退到系统默认。
+func (s *Store) UpdateTimeframe(ctx context.Context, telegramUserID int64, timeframe string) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE users
+SET preferred_timeframe = ?, updated_at = CURRENT_TIMESTAMP
+WHERE telegram_user_id = ?`, nullableString(timeframe), telegramUserID)
+	if err != nil {
+		return fmt.Errorf("保存常用周期: %w", err)
+	}
+	return nil
+}
+
+// UpdateIndicators 保存用户常用指标组；空字符串表示恢复默认集合。
+func (s *Store) UpdateIndicators(ctx context.Context, telegramUserID int64, indicators string) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE users
+SET preferred_indicators = ?, updated_at = CURRENT_TIMESTAMP
+WHERE telegram_user_id = ?`, nullableString(indicators), telegramUserID)
+	if err != nil {
+		return fmt.Errorf("保存常用指标: %w", err)
+	}
+	return nil
+}
+
+// UpdateRiskPerTrade 保存每笔最大亏损；amount<=0 时清除设置。
+func (s *Store) UpdateRiskPerTrade(ctx context.Context, telegramUserID int64, amount float64) error {
+	var value any
+	if amount > 0 {
+		value = amount
+	}
+	_, err := s.db.ExecContext(ctx, `
+UPDATE users
+SET risk_per_trade = ?, updated_at = CURRENT_TIMESTAMP
+WHERE telegram_user_id = ?`, value, telegramUserID)
+	if err != nil {
+		return fmt.Errorf("保存每笔最大亏损: %w", err)
+	}
+	return nil
+}
+
+// UpdateStrategy 保存用户分析策略；空字符串表示恢复单周期。
+func (s *Store) UpdateStrategy(ctx context.Context, telegramUserID int64, strategy string) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE users
+SET preferred_strategy = ?, updated_at = CURRENT_TIMESTAMP
+WHERE telegram_user_id = ?`, nullableString(strategy), telegramUserID)
+	if err != nil {
+		return fmt.Errorf("保存分析策略: %w", err)
 	}
 	return nil
 }

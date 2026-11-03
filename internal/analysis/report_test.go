@@ -119,12 +119,12 @@ func TestBuildReport(t *testing.T) {
 	snapshot := &market.Snapshot{
 		Symbol: market.Symbol{Code: "BTC", Pair: "BTCUSDT", Market: "crypto"},
 		Price:  399,
-		Timeframes: map[string][]market.Candle{
-			"1h": candles,
+		Series: map[market.Timeframe]market.Series{
+			market.TF1h: {Timeframe: market.TF1h, Candles: candles, AsOf: candles[len(candles)-1].OpenTime},
 		},
 		FetchedAt: time.Now().UTC(),
 	}
-	report, err := BuildReport(snapshot, "swing")
+	report, err := BuildReport(snapshot, "swing", market.TF1h, nil)
 	if err != nil {
 		t.Fatalf("BuildReport() error = %v", err)
 	}
@@ -134,7 +134,59 @@ func TestBuildReport(t *testing.T) {
 	if report.DataQuality != "ok" {
 		t.Fatalf("DataQuality = %q", report.DataQuality)
 	}
-	if len(report.Timeframes) != 1 {
-		t.Fatalf("Timeframes = %#v", report.Timeframes)
+	if len(report.Screens) != 1 {
+		t.Fatalf("Screens = %#v", report.Screens)
+	}
+	if report.Strategy != "single" || report.Screens[0].Role != "primary" || report.Screens[0].Timeframe != "1h" {
+		t.Fatalf("screen = %#v", report.Screens[0])
+	}
+}
+
+func TestBuildReportFiltersIndicators(t *testing.T) {
+	candles := makeCandles(300, 100, 1)
+	snapshot := &market.Snapshot{
+		Symbol: market.Symbol{Code: "BTC", Pair: "BTCUSDT", Market: "crypto"},
+		Price:  399,
+		Series: map[market.Timeframe]market.Series{
+			market.TF1D: {Timeframe: market.TF1D, Candles: candles, AsOf: candles[len(candles)-1].OpenTime},
+		},
+		FetchedAt: time.Now().UTC(),
+	}
+	report, err := BuildReport(snapshot, "swing", market.TF1D, []Indicator{IndicatorRSI})
+	if err != nil {
+		t.Fatalf("BuildReport() error = %v", err)
+	}
+	indicators := report.Screens[0].Indicators
+	if indicators.RSI14 == nil {
+		t.Fatal("选择的 rsi 应保留")
+	}
+	if indicators.EMA20 != nil || indicators.EMA50 != nil || indicators.MACDHist != nil ||
+		indicators.SuperTrend != nil || indicators.VolumeRatio != nil {
+		t.Fatalf("未选择的指标不应输出: %#v", indicators)
+	}
+	if indicators.ATRPct == nil || len(indicators.Support) == 0 || len(indicators.Resistance) == 0 {
+		t.Fatalf("基础风控指标必须保留: %#v", indicators)
+	}
+	if indicators.Trend == "" {
+		t.Fatal("trend 应始终保留")
+	}
+}
+
+func TestBuildReportMarksPartial(t *testing.T) {
+	candles := makeCandles(100, 100, 1)
+	snapshot := &market.Snapshot{
+		Symbol: market.Symbol{Code: "BTC", Pair: "BTCUSDT", Market: "crypto"},
+		Price:  199,
+		Series: map[market.Timeframe]market.Series{
+			market.TF1M: {Timeframe: market.TF1M, Candles: candles, Partial: true, AsOf: candles[len(candles)-1].OpenTime},
+		},
+		FetchedAt: time.Now().UTC(),
+	}
+	report, err := BuildReport(snapshot, "swing", market.TF1M, nil)
+	if err != nil {
+		t.Fatalf("BuildReport() error = %v", err)
+	}
+	if report.DataQuality != "partial" || report.Screens[0].DataQuality != "partial" {
+		t.Fatalf("partial 标记缺失: report=%q screen=%q", report.DataQuality, report.Screens[0].DataQuality)
 	}
 }

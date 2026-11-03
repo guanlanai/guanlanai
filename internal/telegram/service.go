@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/url"
 	"regexp"
@@ -19,6 +20,7 @@ import (
 	"github.com/go-telegram/bot/models"
 
 	"github.com/guanlanai/guanlanai/internal/agent"
+	"github.com/guanlanai/guanlanai/internal/analysis"
 	"github.com/guanlanai/guanlanai/internal/config"
 	"github.com/guanlanai/guanlanai/internal/llm"
 	"github.com/guanlanai/guanlanai/internal/logging"
@@ -27,6 +29,7 @@ import (
 	"github.com/guanlanai/guanlanai/internal/ratelimit"
 	"github.com/guanlanai/guanlanai/internal/render"
 	"github.com/guanlanai/guanlanai/internal/resilience"
+	"github.com/guanlanai/guanlanai/internal/risk"
 	"github.com/guanlanai/guanlanai/internal/secrets"
 	"github.com/guanlanai/guanlanai/internal/session"
 	"github.com/guanlanai/guanlanai/internal/text"
@@ -44,7 +47,7 @@ type MessageDeleter interface {
 
 // Analyzer 生成行情观点、回答追问并压缩上下文。
 type Analyzer interface {
-	Analyze(ctx context.Context, usr *user.User, apiKey, query, mode string) (*agent.Result, error)
+	Analyze(ctx context.Context, usr *user.User, apiKey, query, mode string, strategy analysis.Strategy, timeframe market.Timeframe, indicators []analysis.Indicator, sessionID int64) (*agent.Result, error)
 	Chat(ctx context.Context, usr *user.User, apiKey, question, contextText string) (*agent.ChatResult, error)
 	Summarize(ctx context.Context, usr *user.User, apiKey, existingSummary string, messages []session.Message) (*agent.ChatResult, error)
 }
@@ -302,6 +305,14 @@ func (s *Service) handle(ctx context.Context, update *models.Update) {
 		s.handleModelCommand(ctx, msg.Chat.ID, args, usr)
 	case "/mode":
 		s.handleModeCommand(ctx, msg.Chat.ID, args, usr)
+	case "/timeframe":
+		s.handleTimeframeCommand(ctx, msg.Chat.ID, args, usr)
+	case "/indicators":
+		s.handleIndicatorsCommand(ctx, msg.Chat.ID, args, usr)
+	case "/risk":
+		s.handleRiskCommand(ctx, msg.Chat.ID, args, usr)
+	case "/strategy":
+		s.handleStrategyCommand(ctx, msg.Chat.ID, args, usr)
 	case "/analyze":
 		if args == "" {
 			s.send(ctx, msg.Chat.ID, text.NeedSymbol())
@@ -372,33 +383,47 @@ func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.Use
 	if mode != "short" && mode != "swing" {
 		mode = "swing"
 	}
+	// 在发起分析时捕获策略、周期和指标，避免用户在途修改偏好影响本次结果。
+	strategy, _ := s.effectiveStrategy(usr)
+	timeframe, _ := s.effectiveTimeframe(usr)
+	indicators, _ := s.effectiveIndicators(usr)
+	timeframeLabel := analysis.TimeframeLabel(strategy, timeframe)
+	sessionID := int64(0)
+	if sess != nil {
+		sessionID = sess.ID
+	}
 
 	started := time.Now()
 	if sess != nil {
-		_ = s.sessions.AppendMessage(ctx, sess.ID, "user", "分析 "+query+"（"+mode+"）", estimateTokens(query))
+		_ = s.sessions.AppendMessage(ctx, sess.ID, "user",
+			"分析 "+query+"（"+timeframeLabel+" · "+mode+"）", estimateTokens(query))
 	}
-	s.send(ctx, chatID, text.Analyzing(query, mode))
-	result, err := s.analyzer.Analyze(ctx, usr, key, query, mode)
+	s.send(ctx, chatID, text.Analyzing(query, timeframeLabel, mode))
+	result, err := s.analyzer.Analyze(ctx, usr, key, query, mode, strategy, timeframe, indicators, sessionID)
 	if err != nil {
 		s.recordUsage(ctx, usr, "analysis", model, nil, time.Since(started), "error")
 		s.logger.Error("分析失败",
 			"chat", logging.HashID(chatID),
 			"query", query,
 			"mode", mode,
+			"strategy", string(strategy),
+			"timeframe", timeframeLabel,
 			"error", err,
 		)
 		s.send(ctx, chatID, text.AnalysisError(reason(err)))
 		return
 	}
 
-	card := render.OpinionCard(result.Report, result.Opinion)
+	position := s.positionFor(scope, usr, result)
+	card := render.OpinionCard(result.Report, result.Opinion, position)
 	if sess != nil {
 		payload, marshalErr := json.Marshal(map[string]any{
-			"report":  result.Report,
-			"opinion": result.Opinion,
+			"report":   result.Report,
+			"opinion":  result.Opinion,
+			"position": position,
 		})
 		if marshalErr == nil {
-			if _, saveErr := s.sessions.SaveAnalysis(ctx, sess.ID, result.Report.Symbol, result.Report.Market, string(payload)); saveErr != nil {
+			if _, saveErr := s.sessions.SaveAnalysis(ctx, sess.ID, result.Report.Symbol, result.Report.Market, timeframeLabel, string(payload)); saveErr != nil {
 				s.logger.Warn("保存分析上下文失败", "chat", logging.HashID(chatID), "error", saveErr)
 			}
 		}
@@ -831,6 +856,12 @@ func (s *Service) handleStatus(ctx context.Context, chatID int64, usr *user.User
 	if endpoint == "" {
 		endpoint = endpointHost(s.cfg.OpenAIBaseURL)
 	}
+	strategy, _ := s.effectiveStrategy(usr)
+	timeframe, timeframeDefault := s.effectiveTimeframe(usr)
+	if strategy == analysis.StrategyTripleScreen {
+		timeframeDefault = false
+	}
+	timeframeLabel := analysis.TimeframeLabel(strategy, timeframe)
 
 	message := text.Status(
 		s.cfg.InstanceName,
@@ -838,14 +869,25 @@ func (s *Service) handleStatus(ctx context.Context, chatID int64, usr *user.User
 		s.cfg.AppEnv,
 		model,
 		mode,
+		analysis.StrategyLabel(strategy),
+		timeframeLabel,
+		timeframeDefault,
 		key,
 		endpoint,
 		time.Since(s.started),
 	)
+	if usr.RiskPerTrade > 0 {
+		message += fmt.Sprintf("\n每笔风险：<code>%s USDT</code>", strconv.FormatFloat(usr.RiskPerTrade, 'f', -1, 64))
+	} else {
+		message += "\n每笔风险：未设置"
+	}
 	if sess != nil {
 		message += fmt.Sprintf("\n当前会话：#%d <b>%s</b>", sess.ID, render.EscapeHTML(sess.Title))
 		if sess.CurrentSymbol != "" {
 			message += fmt.Sprintf("\n当前标的：<code>%s</code>", render.EscapeHTML(sess.CurrentSymbol))
+		}
+		if sess.CurrentTimeframe != "" && sess.CurrentTimeframe != timeframe.String() {
+			message += fmt.Sprintf("\n最近分析周期：<code>%s</code>", render.EscapeHTML(sess.CurrentTimeframe))
 		}
 	}
 	if s.usage != nil && usr.ID != 0 {
@@ -866,7 +908,19 @@ func (s *Service) handleGroupStatus(ctx context.Context, chatID int64, usr *user
 	if mode == "" {
 		mode = s.cfg.DefaultMode
 	}
-	message := text.GroupStatus(s.cfg.InstanceName, model, mode)
+	strategy, _ := s.effectiveStrategy(usr)
+	timeframe, timeframeDefault := s.effectiveTimeframe(usr)
+	if strategy == analysis.StrategyTripleScreen {
+		timeframeDefault = false
+	}
+	message := text.GroupStatus(
+		s.cfg.InstanceName,
+		model,
+		mode,
+		analysis.StrategyLabel(strategy),
+		analysis.TimeframeLabel(strategy, timeframe),
+		timeframeDefault,
+	)
 	if sess != nil {
 		message += fmt.Sprintf("\n当前会话：<b>%s</b>", render.EscapeHTML(sess.Title))
 		if sess.CurrentSymbol != "" {
@@ -1125,6 +1179,254 @@ func (s *Service) handleModeCommand(ctx context.Context, chatID int64, args stri
 	}
 }
 
+func (s *Service) handleTimeframeCommand(ctx context.Context, chatID int64, args string, usr *user.User) {
+	current, isDefault := s.effectiveTimeframe(usr)
+	value := strings.TrimSpace(args)
+	if value == "" {
+		s.send(ctx, chatID, text.TimeframeCurrent(current.String(), isDefault))
+		return
+	}
+	if strings.EqualFold(value, "reset") {
+		if s.store == nil {
+			s.send(ctx, chatID, text.Unavailable("周期配置"))
+			return
+		}
+		if err := s.store.UpdateTimeframe(ctx, usr.TelegramUserID, ""); err != nil {
+			s.logger.Error("重置常用周期失败", "chat", logging.HashID(chatID), "error", err)
+			s.send(ctx, chatID, text.GenericError())
+			return
+		}
+		usr.PreferredTimeframe = ""
+		defaultTimeframe := market.DefaultTimeframe
+		if s.cfg.DefaultTimeframe.Valid() {
+			defaultTimeframe = s.cfg.DefaultTimeframe
+		}
+		s.send(ctx, chatID, text.TimeframeReset(defaultTimeframe.String()))
+		return
+	}
+
+	timeframe, err := market.ParseTimeframe(value)
+	if err != nil {
+		s.send(ctx, chatID, text.TimeframeInvalid(market.TimeframesLabel()))
+		return
+	}
+	if s.store == nil {
+		s.send(ctx, chatID, text.Unavailable("周期配置"))
+		return
+	}
+	if err := s.store.UpdateTimeframe(ctx, usr.TelegramUserID, timeframe.String()); err != nil {
+		s.logger.Error("保存常用周期失败", "chat", logging.HashID(chatID), "error", err)
+		s.send(ctx, chatID, text.GenericError())
+		return
+	}
+	usr.PreferredTimeframe = timeframe.String()
+	s.send(ctx, chatID, text.TimeframeSet(timeframe.String()))
+}
+
+// positionFor 只在私聊且用户设置了风险金额时计算仓位；群组不展示、不保存风险金额。
+func (s *Service) positionFor(scope session.Scope, usr *user.User, result *agent.Result) *risk.Position {
+	if scope != session.ScopePrivate || usr == nil || usr.RiskPerTrade <= 0 || result == nil || result.Opinion == nil {
+		return nil
+	}
+	plan := result.Opinion.TradePlan
+	if plan == nil {
+		return nil
+	}
+	position, err := risk.Calculate(
+		result.Opinion.Direction,
+		plan.EntryLow,
+		plan.EntryHigh,
+		plan.StopLoss,
+		usr.RiskPerTrade,
+	)
+	if err != nil {
+		s.logger.Warn("仓位计算失败", "direction", result.Opinion.Direction, "error", err)
+		return nil
+	}
+	return position
+}
+
+func (s *Service) handleStrategyCommand(ctx context.Context, chatID int64, args string, usr *user.User) {
+	current, isDefault := s.effectiveStrategy(usr)
+	value := strings.TrimSpace(args)
+	if value == "" {
+		s.send(ctx, chatID, text.StrategyCurrent(analysis.StrategyLabel(current), tripleScreenLabel(), isDefault))
+		return
+	}
+	if strings.EqualFold(value, "reset") {
+		if s.store == nil {
+			s.send(ctx, chatID, text.Unavailable("策略配置"))
+			return
+		}
+		if err := s.store.UpdateStrategy(ctx, usr.TelegramUserID, ""); err != nil {
+			s.logger.Error("重置分析策略失败", "chat", logging.HashID(chatID), "error", err)
+			s.send(ctx, chatID, text.GenericError())
+			return
+		}
+		usr.PreferredStrategy = ""
+		s.send(ctx, chatID, text.StrategyReset(analysis.StrategyLabel(analysis.StrategySingle)))
+		return
+	}
+
+	strategy, err := analysis.ParseStrategy(value)
+	if err != nil {
+		s.send(ctx, chatID, text.StrategyInvalid(tripleScreenLabel()))
+		return
+	}
+	stored := string(strategy)
+	if strategy == analysis.StrategySingle {
+		stored = ""
+	}
+	if s.store == nil {
+		s.send(ctx, chatID, text.Unavailable("策略配置"))
+		return
+	}
+	if err := s.store.UpdateStrategy(ctx, usr.TelegramUserID, stored); err != nil {
+		s.logger.Error("保存分析策略失败", "chat", logging.HashID(chatID), "error", err)
+		s.send(ctx, chatID, text.GenericError())
+		return
+	}
+	usr.PreferredStrategy = stored
+	s.send(ctx, chatID, text.StrategySet(strategy == analysis.StrategyTripleScreen, tripleScreenLabel()))
+}
+
+func tripleScreenLabel() string {
+	parts := make([]string, 0, len(analysis.TripleScreenTemplate))
+	for _, spec := range analysis.TripleScreenTemplate {
+		parts = append(parts, spec.Timeframe.String())
+	}
+	return strings.Join(parts, "/")
+}
+
+// effectiveStrategy 返回用户偏好或默认单周期，并标明是否使用默认值。
+func (s *Service) effectiveStrategy(usr *user.User) (analysis.Strategy, bool) {
+	if usr != nil && strings.TrimSpace(usr.PreferredStrategy) != "" {
+		if strategy, err := analysis.ParseStrategy(usr.PreferredStrategy); err == nil {
+			return strategy, false
+		}
+	}
+	return analysis.StrategySingle, true
+}
+
+func (s *Service) handleRiskCommand(ctx context.Context, chatID int64, args string, usr *user.User) {
+	value := strings.TrimSpace(args)
+	if value == "" {
+		if usr.RiskPerTrade > 0 {
+			s.send(ctx, chatID, text.RiskCurrent(usr.RiskPerTrade))
+		} else {
+			s.send(ctx, chatID, text.RiskNotSet())
+		}
+		return
+	}
+	if strings.EqualFold(value, "reset") {
+		if s.store == nil {
+			s.send(ctx, chatID, text.Unavailable("风险配置"))
+			return
+		}
+		if err := s.store.UpdateRiskPerTrade(ctx, usr.TelegramUserID, 0); err != nil {
+			s.logger.Error("清除每笔最大亏损失败", "chat", logging.HashID(chatID), "error", err)
+			s.send(ctx, chatID, text.GenericError())
+			return
+		}
+		usr.RiskPerTrade = 0
+		s.send(ctx, chatID, text.RiskReset())
+		return
+	}
+
+	amount, ok := parseRiskAmount(value)
+	if !ok {
+		s.send(ctx, chatID, text.RiskInvalid())
+		return
+	}
+	if s.store == nil {
+		s.send(ctx, chatID, text.Unavailable("风险配置"))
+		return
+	}
+	if err := s.store.UpdateRiskPerTrade(ctx, usr.TelegramUserID, amount); err != nil {
+		s.logger.Error("保存每笔最大亏损失败", "chat", logging.HashID(chatID), "error", err)
+		s.send(ctx, chatID, text.GenericError())
+		return
+	}
+	usr.RiskPerTrade = amount
+	s.send(ctx, chatID, text.RiskSet(amount))
+}
+
+func parseRiskAmount(raw string) (float64, bool) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.TrimPrefix(value, "$")
+	value = strings.TrimSpace(strings.TrimSuffix(value, "usdt"))
+	value = strings.ReplaceAll(value, ",", "")
+	amount, err := strconv.ParseFloat(value, 64)
+	if err != nil || amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) || amount > 1e12 {
+		return 0, false
+	}
+	return amount, true
+}
+
+func (s *Service) handleIndicatorsCommand(ctx context.Context, chatID int64, args string, usr *user.User) {
+	current, isDefault := s.effectiveIndicators(usr)
+	value := strings.TrimSpace(args)
+	if value == "" {
+		s.send(ctx, chatID, text.IndicatorsCurrent(analysis.JoinIndicators(current), isDefault))
+		return
+	}
+	if strings.EqualFold(value, "reset") {
+		if s.store == nil {
+			s.send(ctx, chatID, text.Unavailable("指标配置"))
+			return
+		}
+		if err := s.store.UpdateIndicators(ctx, usr.TelegramUserID, ""); err != nil {
+			s.logger.Error("重置常用指标失败", "chat", logging.HashID(chatID), "error", err)
+			s.send(ctx, chatID, text.GenericError())
+			return
+		}
+		usr.PreferredIndicators = ""
+		s.send(ctx, chatID, text.IndicatorsReset(analysis.IndicatorsLabel()))
+		return
+	}
+
+	indicators, err := analysis.ParseIndicators(value)
+	if err != nil {
+		s.send(ctx, chatID, text.IndicatorsInvalid(err.Error(), analysis.IndicatorsLabel()))
+		return
+	}
+	if s.store == nil {
+		s.send(ctx, chatID, text.Unavailable("指标配置"))
+		return
+	}
+	normalized := analysis.JoinIndicators(indicators)
+	if err := s.store.UpdateIndicators(ctx, usr.TelegramUserID, normalized); err != nil {
+		s.logger.Error("保存常用指标失败", "chat", logging.HashID(chatID), "error", err)
+		s.send(ctx, chatID, text.GenericError())
+		return
+	}
+	usr.PreferredIndicators = normalized
+	s.send(ctx, chatID, text.IndicatorsSet(normalized))
+}
+
+// effectiveIndicators 返回用户偏好或默认全部指标，并标明是否使用默认值。
+func (s *Service) effectiveIndicators(usr *user.User) ([]analysis.Indicator, bool) {
+	if usr != nil && strings.TrimSpace(usr.PreferredIndicators) != "" {
+		if indicators, err := analysis.ParseIndicators(usr.PreferredIndicators); err == nil {
+			return indicators, false
+		}
+	}
+	return analysis.DefaultIndicators(), true
+}
+
+// effectiveTimeframe 返回用户偏好或系统默认周期，并标明是否使用默认值。
+func (s *Service) effectiveTimeframe(usr *user.User) (market.Timeframe, bool) {
+	if usr != nil {
+		if timeframe, err := market.ParseTimeframe(usr.PreferredTimeframe); err == nil {
+			return timeframe, false
+		}
+	}
+	if s.cfg.DefaultTimeframe.Valid() {
+		return s.cfg.DefaultTimeframe, true
+	}
+	return market.DefaultTimeframe, true
+}
+
 func (s *Service) decryptKey(usr *user.User) (string, error) {
 	if s.cipher == nil || !usr.HasKey() {
 		return "", errors.New("没有可解密的 Key")
@@ -1269,7 +1571,7 @@ func scopeForChat(chatType models.ChatType) session.Scope {
 
 func privateOnlyCommand(command string) bool {
 	switch command {
-	case "/key", "/baseurl", "/model", "/mode", "/new", "/sessions", "/switch", "/rename", "/delete":
+	case "/key", "/baseurl", "/model", "/mode", "/timeframe", "/indicators", "/risk", "/strategy", "/new", "/sessions", "/switch", "/rename", "/delete":
 		return true
 	default:
 		return false

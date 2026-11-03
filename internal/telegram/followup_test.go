@@ -89,9 +89,10 @@ func (f *fakeSessionStore) RecentMessages(_ context.Context, _ int64, _ int) ([]
 	return f.messages, nil
 }
 
-func (f *fakeSessionStore) SaveAnalysis(_ context.Context, _ int64, symbol, market, analysisJSON string) (*session.Session, error) {
+func (f *fakeSessionStore) SaveAnalysis(_ context.Context, _ int64, symbol, market, timeframe, analysisJSON string) (*session.Session, error) {
 	f.sess.CurrentSymbol = symbol
 	f.sess.CurrentMarket = market
+	f.sess.CurrentTimeframe = timeframe
 	f.sess.LastAnalysisJSON = analysisJSON
 	return f.sess, nil
 }

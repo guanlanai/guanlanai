@@ -96,18 +96,120 @@ func TestSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	snapshot, err := client.Snapshot(ctx, symbol, []string{"1h", "4h"})
+	snapshot, err := client.Snapshot(ctx, symbol, []market.Timeframe{market.TF1h, market.TF4h})
 	if err != nil {
 		t.Fatalf("Snapshot() error = %v", err)
 	}
 	if snapshot.Price != 100.5 || snapshot.ChangePct != 1.5 {
 		t.Fatalf("snapshot price/change = %v/%v", snapshot.Price, snapshot.ChangePct)
 	}
-	if len(snapshot.Timeframes["1h"]) != 300 {
-		t.Fatalf("1h candles = %d", len(snapshot.Timeframes["1h"]))
+	if len(snapshot.Series[market.TF1h].Candles) != 300 {
+		t.Fatalf("1h candles = %d", len(snapshot.Series[market.TF1h].Candles))
 	}
-	if snapshot.Partial {
+	if snapshot.Series[market.TF1h].Partial {
 		t.Fatal("300 根 K 线不应标记 partial")
+	}
+	if snapshot.Series[market.TF1h].AsOf.IsZero() {
+		t.Fatal("Series.AsOf 未设置")
+	}
+}
+
+func TestIntervalMapping(t *testing.T) {
+	tests := []struct {
+		timeframe market.Timeframe
+		interval  string
+	}{
+		{market.TF1m, "1m"},
+		{market.TF1h, "1h"},
+		{market.TF4h, "4h"},
+		{market.TF1D, "1d"},
+		{market.TF1W, "1w"},
+		{market.TF1M, "1M"},
+	}
+	for _, tt := range tests {
+		interval, err := intervalFor(tt.timeframe)
+		if err != nil {
+			t.Fatalf("intervalFor(%s) error = %v", tt.timeframe, err)
+		}
+		if interval != tt.interval {
+			t.Fatalf("intervalFor(%s) = %q, want %q", tt.timeframe, interval, tt.interval)
+		}
+	}
+}
+
+func TestSnapshotSingleTimeframeRequestsOneKline(t *testing.T) {
+	var klineCalls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/ticker/24hr", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"lastPrice":"100.5","priceChangePercent":"1.5"}`))
+	})
+	mux.HandleFunc("/api/v3/klines", func(w http.ResponseWriter, _ *http.Request) {
+		klineCalls.Add(1)
+		_, _ = w.Write([]byte(`[[0,"100","101","99","100.5","1000",0,0,0,0,0,0]]`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := NewClient(server.URL, "", 2*time.Second)
+	symbol := market.Symbol{Pair: "BTCUSDT"}
+	snapshot, err := client.Snapshot(context.Background(), symbol, []market.Timeframe{market.TF1D})
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if klineCalls.Load() != 1 {
+		t.Fatalf("K 线请求次数 = %d, want 1", klineCalls.Load())
+	}
+	if _, ok := snapshot.Series[market.TF1D]; !ok {
+		t.Fatalf("缺少 1D series: %#v", snapshot.Series)
+	}
+
+	// 同一周期在 TTL 内复用，不重复请求 K 线。
+	if _, err := client.Snapshot(context.Background(), symbol, []market.Timeframe{market.TF1D}); err != nil {
+		t.Fatalf("第二次 Snapshot() error = %v", err)
+	}
+	if klineCalls.Load() != 1 {
+		t.Fatalf("同一周期重复请求 K 线: %d", klineCalls.Load())
+	}
+
+	// 不同周期使用独立缓存键。
+	if _, err := client.Snapshot(context.Background(), symbol, []market.Timeframe{market.TF4h}); err != nil {
+		t.Fatalf("4h Snapshot() error = %v", err)
+	}
+	if klineCalls.Load() != 2 {
+		t.Fatalf("不同周期应单独请求: %d", klineCalls.Load())
+	}
+}
+
+func TestSnapshotReturnsPartialWhenOneTimeframeFails(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/ticker/24hr", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"lastPrice":"100.5","priceChangePercent":"1.5"}`))
+	})
+	mux.HandleFunc("/api/v3/klines", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("interval") == "1w" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"msg":"invalid"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`[[0,"100","101","99","100.5","1000",0,0,0,0,0,0]]`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := NewClient(server.URL, "", 2*time.Second)
+	snapshot, err := client.Snapshot(context.Background(), market.Symbol{Pair: "BTCUSDT"},
+		[]market.Timeframe{market.TF1W, market.TF1D, market.TF1h})
+	if err != nil {
+		t.Fatalf("多周期部分失败不应整体失败: %v", err)
+	}
+	if _, ok := snapshot.Series[market.TF1W]; ok {
+		t.Fatal("失败的 1W 不应出现在快照中")
+	}
+	if _, ok := snapshot.Series[market.TF1D]; !ok {
+		t.Fatal("1D 应保留")
+	}
+	if _, ok := snapshot.Series[market.TF1h]; !ok {
+		t.Fatal("1h 应保留")
 	}
 }
 
@@ -145,7 +247,7 @@ func TestSnapshotFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	if _, err := client.Snapshot(ctx, symbol, []string{"1h"}); err != nil {
+	if _, err := client.Snapshot(ctx, symbol, []market.Timeframe{market.TF1h}); err != nil {
 		t.Fatalf("Snapshot() fallback error = %v", err)
 	}
 }

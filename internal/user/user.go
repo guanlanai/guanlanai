@@ -4,17 +4,21 @@ import "context"
 
 // User 是 Telegram 用户及其分析配置。
 type User struct {
-	ID             int64
-	TelegramUserID int64
-	Username       string
-	KeyCiphertext  []byte
-	KeyNonce       []byte
-	KeyVersion     int
-	KeyStatus      string
-	APIBaseURL     string
-	Model          string
-	Mode           string
-	Status         string
+	ID                  int64
+	TelegramUserID      int64
+	Username            string
+	KeyCiphertext       []byte
+	KeyNonce            []byte
+	KeyVersion          int
+	KeyStatus           string
+	APIBaseURL          string
+	Model               string
+	Mode                string
+	PreferredTimeframe  string
+	PreferredIndicators string
+	PreferredStrategy   string
+	RiskPerTrade        float64
+	Status              string
 }
 
 // HasKey 表示用户是否已保存 API Key。
@@ -30,4 +34,8 @@ type Store interface {
 	UpdateBaseURL(ctx context.Context, telegramUserID int64, baseURL string) error
 	UpdateModel(ctx context.Context, telegramUserID int64, model string) error
 	UpdateMode(ctx context.Context, telegramUserID int64, mode string) error
+	UpdateTimeframe(ctx context.Context, telegramUserID int64, timeframe string) error
+	UpdateIndicators(ctx context.Context, telegramUserID int64, indicators string) error
+	UpdateRiskPerTrade(ctx context.Context, telegramUserID int64, amount float64) error
+	UpdateStrategy(ctx context.Context, telegramUserID int64, strategy string) error
 }

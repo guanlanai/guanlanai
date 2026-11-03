@@ -59,8 +59,12 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Fatalf("messages = %#v", messages)
 	}
 
-	if _, err := store.SaveAnalysis(ctx, sess.ID, "BTC", "crypto", `{"opinion":"bullish"}`); err != nil {
+	saved, err := store.SaveAnalysis(ctx, sess.ID, "BTC", "crypto", "4h", `{"opinion":"bullish"}`)
+	if err != nil {
 		t.Fatalf("SaveAnalysis() error = %v", err)
+	}
+	if saved.CurrentTimeframe != "4h" {
+		t.Fatalf("CurrentTimeframe = %q, want 4h", saved.CurrentTimeframe)
 	}
 	if err := store.UpdateSummary(ctx, sess.ID, "summary", 5); err != nil {
 		t.Fatalf("UpdateSummary() error = %v", err)
@@ -77,7 +81,7 @@ func TestSessionLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset() error = %v", err)
 	}
-	if reset.Generation != 1 || reset.Summary != "" || reset.LastAnalysisJSON != "" || reset.CurrentSymbol != "" {
+	if reset.Generation != 1 || reset.Summary != "" || reset.LastAnalysisJSON != "" || reset.CurrentSymbol != "" || reset.CurrentTimeframe != "" {
 		t.Fatalf("reset = %#v", reset)
 	}
 	messages, _ = store.RecentMessages(ctx, sess.ID, 10)

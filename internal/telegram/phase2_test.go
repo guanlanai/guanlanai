@@ -69,6 +69,26 @@ func (f *fakeStore) UpdateMode(_ context.Context, _ int64, mode string) error {
 	return nil
 }
 
+func (f *fakeStore) UpdateTimeframe(_ context.Context, _ int64, timeframe string) error {
+	f.usr.PreferredTimeframe = timeframe
+	return nil
+}
+
+func (f *fakeStore) UpdateIndicators(_ context.Context, _ int64, indicators string) error {
+	f.usr.PreferredIndicators = indicators
+	return nil
+}
+
+func (f *fakeStore) UpdateRiskPerTrade(_ context.Context, _ int64, amount float64) error {
+	f.usr.RiskPerTrade = amount
+	return nil
+}
+
+func (f *fakeStore) UpdateStrategy(_ context.Context, _ int64, strategy string) error {
+	f.usr.PreferredStrategy = strategy
+	return nil
+}
+
 type fakeCipher struct{}
 
 func (fakeCipher) Encrypt(plaintext string, _ []byte) ([]byte, []byte, error) {
@@ -320,17 +340,25 @@ func TestNonStrictAllowsManualModel(t *testing.T) {
 }
 
 type fakeAnalyzer struct {
-	calls  int
-	query  string
-	mode   string
-	result *agent.Result
-	err    error
+	calls      int
+	query      string
+	mode       string
+	strategy   analysis.Strategy
+	timeframe  market.Timeframe
+	indicators []analysis.Indicator
+	sessionID  int64
+	result     *agent.Result
+	err        error
 }
 
-func (f *fakeAnalyzer) Analyze(_ context.Context, _ *user.User, _, query, mode string) (*agent.Result, error) {
+func (f *fakeAnalyzer) Analyze(_ context.Context, _ *user.User, _, query, mode string, strategy analysis.Strategy, timeframe market.Timeframe, indicators []analysis.Indicator, sessionID int64) (*agent.Result, error) {
 	f.calls++
 	f.query = query
 	f.mode = mode
+	f.strategy = strategy
+	f.timeframe = timeframe
+	f.indicators = indicators
+	f.sessionID = sessionID
 	return f.result, f.err
 }
 

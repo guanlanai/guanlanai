@@ -66,6 +66,96 @@ func TestUserLifecycle(t *testing.T) {
 	if usr.APIBaseURL != "https://proxy.example.com/v1" || usr.Model != "model-x" || usr.Mode != "short" {
 		t.Fatalf("配置未更新: %#v", usr)
 	}
+	if usr.PreferredTimeframe != "" {
+		t.Fatalf("新用户不应有周期偏好: %#v", usr)
+	}
+
+	if err := store.UpdateTimeframe(ctx, 123, "4h"); err != nil {
+		t.Fatalf("UpdateTimeframe() error = %v", err)
+	}
+	usr, err = store.GetOrCreate(ctx, 123, "alice", "https://api.openai.com/v1", "swing")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	if usr.PreferredTimeframe != "4h" {
+		t.Fatalf("PreferredTimeframe = %q, want 4h", usr.PreferredTimeframe)
+	}
+
+	if err := store.UpdateTimeframe(ctx, 123, ""); err != nil {
+		t.Fatalf("清除周期偏好 error = %v", err)
+	}
+	usr, err = store.GetOrCreate(ctx, 123, "alice", "https://api.openai.com/v1", "swing")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	if usr.PreferredTimeframe != "" {
+		t.Fatalf("周期偏好未清空: %#v", usr)
+	}
+	if usr.PreferredIndicators != "" {
+		t.Fatalf("新用户不应有指标偏好: %#v", usr)
+	}
+
+	if err := store.UpdateIndicators(ctx, 123, "rsi,atr"); err != nil {
+		t.Fatalf("UpdateIndicators() error = %v", err)
+	}
+	usr, err = store.GetOrCreate(ctx, 123, "alice", "https://api.openai.com/v1", "swing")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	if usr.PreferredIndicators != "rsi,atr" {
+		t.Fatalf("PreferredIndicators = %q, want rsi,atr", usr.PreferredIndicators)
+	}
+	if err := store.UpdateIndicators(ctx, 123, ""); err != nil {
+		t.Fatalf("清除指标偏好 error = %v", err)
+	}
+	usr, err = store.GetOrCreate(ctx, 123, "alice", "https://api.openai.com/v1", "swing")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	if usr.PreferredIndicators != "" {
+		t.Fatalf("指标偏好未清空: %#v", usr)
+	}
+	if usr.RiskPerTrade != 0 {
+		t.Fatalf("新用户不应有风险金额: %#v", usr)
+	}
+	if usr.PreferredStrategy != "" {
+		t.Fatalf("新用户不应有策略偏好: %#v", usr)
+	}
+
+	if err := store.UpdateStrategy(ctx, 123, "triple_screen"); err != nil {
+		t.Fatalf("UpdateStrategy() error = %v", err)
+	}
+	usr, err = store.GetOrCreate(ctx, 123, "alice", "https://api.openai.com/v1", "swing")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	if usr.PreferredStrategy != "triple_screen" {
+		t.Fatalf("PreferredStrategy = %q", usr.PreferredStrategy)
+	}
+	if err := store.UpdateStrategy(ctx, 123, ""); err != nil {
+		t.Fatalf("清除策略偏好 error = %v", err)
+	}
+
+	if err := store.UpdateRiskPerTrade(ctx, 123, 100); err != nil {
+		t.Fatalf("UpdateRiskPerTrade() error = %v", err)
+	}
+	usr, err = store.GetOrCreate(ctx, 123, "alice", "https://api.openai.com/v1", "swing")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	if usr.RiskPerTrade != 100 {
+		t.Fatalf("RiskPerTrade = %v, want 100", usr.RiskPerTrade)
+	}
+	if err := store.UpdateRiskPerTrade(ctx, 123, 0); err != nil {
+		t.Fatalf("清除风险金额 error = %v", err)
+	}
+	usr, err = store.GetOrCreate(ctx, 123, "alice", "https://api.openai.com/v1", "swing")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	if usr.RiskPerTrade != 0 {
+		t.Fatalf("风险金额未清空: %#v", usr)
+	}
 
 	if err := store.DeleteKey(ctx, 123); err != nil {
 		t.Fatalf("DeleteKey() error = %v", err)

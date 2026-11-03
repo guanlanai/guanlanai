@@ -1,6 +1,6 @@
 # 分析周期与个人偏好设计
 
-> 状态：设计完成，待实施。
+> 状态：Phase 1–4 已实施并部署到 prod/staging（2026-11-03，镜像 `guanlanai:profiles-v2`）。
 > 目标：把“分析周期”和“用户偏好”从 Binance/多周期临时逻辑中抽出来，形成跨行情源的交易助手配置体系。
 
 ## 1. 目标与非目标
@@ -378,10 +378,57 @@ DEFAULT_TIMEFRAME=1D
 - 确定性跨周期对齐规则和 `alignment` 输出。
 - 未收盘 K 线、partial 数据和 token 预算处理。
 
-## 14. 开放问题
+## 14. 实施状态
+
+### Phase 1（已完成，2026-11-03）
+
+- 新增 `market.Timeframe`、标准周期集合、别名归一化和默认 `1D`。
+- 迁移 `0003_timeframe.sql`：`users.preferred_timeframe`、`sessions.current_timeframe`。
+- `market.Snapshot` 改为按周期集合的 `Series`；Binance 适配器内部完成标准周期到 interval 的映射。
+- `analysis.Report` 改为 `strategy + screens`，Phase 1 固定 `strategy=single`、单个 `primary` screen；数据不足时标记 `partial`。
+- 新增 `/timeframe`（查看/设置/重置，仅私聊）；`/status`、分析开始提示和观点卡片展示当前周期，未设置偏好时标明“默认”。
+- 分析发起时捕获周期，写入会话 `current_timeframe` 和历史上下文。
+- 配置新增 `DEFAULT_TIMEFRAME`，启动时校验。
+
+### Phase 2（已完成，2026-11-03）
+
+- 迁移 `0004_indicators.sql`：`users.preferred_indicators`。
+- 新增 `analysis.Indicator`、指标解析/归一化和 `/indicators`（查看/设置/重置，仅私聊）。
+- 指标选择只影响写入报告的指标组；`trend`、ATR 和支撑阻力始终保留。
+- 新增会话级 `market.SnapshotCache`：同一会话、同一交易对和周期在 TTL 内复用最近一次快照，切换指标后的下一次分析不重新拉 K 线。
+- Binance K 线缓存改为按 `(pair, timeframe)` 的 LRU（最多 1000 项），TTL 按周期区分：短周期 2 分钟、小时级 10 分钟、日/周 30 分钟、月 2 小时。
+- 不同会话不共享快照；超过 TTL、切换交易对或周期后允许重新拉取。
+
+### Phase 3（已完成，2026-11-03）
+
+- 迁移 `0005_risk.sql`：`users.risk_per_trade`（USDT）。
+- 新增 `/risk`（查看/设置/重置，仅私聊），支持 `100`、`100 USDT`、`$100` 等输入。
+- 新增 `internal/risk` 确定性仓位计算：入场价取交易计划区间中点，数量 = 每笔风险金额 / |入场价 - 止损价|；杠杆固定为 1。
+- 私聊观点卡片新增仓位区块：风险上限、入场参考、止损、数量、名义价值、无杠杆提示和风险提示。
+- 未设置风险金额、没有交易计划或观点为中性时不计算仓位。
+- 群组不展示、不保存风险金额和仓位建议。
+
+### Phase 4（已完成，2026-11-03）
+
+- 迁移 `0006_strategy.sql`：`users.preferred_strategy`；新增 `/strategy`（查看/切换，仅私聊）。
+- 新增 `single` 和 `triple_screen` 两种策略；三重滤网模板固定为 `1W/1D/1h`（潮汐/波浪/涟漪）。
+- `market.Provider.Snapshot` 支持多周期并行拉取；单个周期失败时返回部分快照，由报告层降级为 partial screen。
+- `analysis.Report` 增加 `alignment`，由确定性规则计算 `tide/wave/entry/conflict`，LLM 只负责解释。
+- 日线及以上使用最近已收盘 K 线，`screen.includes_forming` 标记是否包含未收盘 K 线；低周期保留当前 K 线。
+- 多周期报告的支撑阻力压缩为各 2 条，控制提示词 token 预算。
+- 观点卡片新增多周期区块，展示潮汐、波浪、涟漪和冲突状态。
+- 会话快照缓存支持一次检查多个周期；三重滤网命中后同样不重新拉 K 线。
+
+### 后续阶段
+
+- 三重滤网周期模板可配置化（当前固定 `1W/1D/1h`）。
+
+## 15. 开放问题
 
 1. `/timeframe` 是否只允许私聊？本文按“是”设计，与 Key/model/mode 一致。
 2. Phase 1 是否只跑一个 `primary` screen？本文按“是”设计，单周期是 screen 集合的特例。
 3. 指标偏好的默认集合是否等同当前全部指标？建议默认全部，用户可裁剪。
 4. 风险偏好是否存绝对金额（USDT）还是百分比？建议两者都支持，但只存用户显式输入的值。
+   Phase 3 先实现绝对金额（USDT）；百分比模式需要账户总额，暂缓到后续阶段。
 5. 三重滤网的默认周期组合是 `1W/1D/1h` 还是可配置模板？建议先提供模板，再允许用户微调。
+   Phase 4 先固定 `1W/1D/1h` 模板，后续再允许用户微调。

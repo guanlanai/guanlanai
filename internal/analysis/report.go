@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -9,8 +10,8 @@ import (
 	"github.com/guanlanai/guanlanai/internal/market"
 )
 
-// Timeframe 是单个周期的压缩指标。
-type Timeframe struct {
+// Indicators 是单个 screen 的压缩指标。
+type Indicators struct {
 	Trend       string      `json:"trend"`
 	EMA20       *float64    `json:"ema20,omitempty"`
 	EMA50       *float64    `json:"ema50,omitempty"`
@@ -24,6 +25,17 @@ type Timeframe struct {
 	Resistance  []float64   `json:"resistance"`
 }
 
+// Screen 是分析计划中的一个周期视图。
+// Phase 1 只有 role=primary 的一个 screen；多周期策略只需增加 screen。
+type Screen struct {
+	Role            string     `json:"role"`
+	Timeframe       string     `json:"timeframe"`
+	AsOf            time.Time  `json:"as_of"`
+	IncludesForming bool       `json:"includes_forming"`
+	DataQuality     string     `json:"data_quality"`
+	Indicators      Indicators `json:"indicators"`
+}
+
 // SuperTrend 是单个周期的 SuperTrend 指标快照。
 // Direction 为 up 表示价格在 SuperTrend 线之上、趋势偏多；down 相反。
 type SuperTrend struct {
@@ -35,28 +47,53 @@ type SuperTrend struct {
 	Multiplier    float64 `json:"multiplier"`
 }
 
-// Report 是传给 LLM 的完整技术面摘要。
-type Report struct {
-	Symbol      string               `json:"symbol"`
-	Pair        string               `json:"pair"`
-	Quote       string               `json:"quote"`
-	Market      string               `json:"market"`
-	Mode        string               `json:"mode"`
-	AsOf        time.Time            `json:"as_of"`
-	Price       float64              `json:"price"`
-	ChangePct   float64              `json:"change_pct"`
-	Timeframes  map[string]Timeframe `json:"timeframes"`
-	DataQuality string               `json:"data_quality"`
-	Source      string               `json:"source"`
+// Alignment 是三重滤网的确定性跨周期结论，由代码计算，LLM 只负责解释。
+type Alignment struct {
+	Tide     string `json:"tide"`
+	Wave     string `json:"wave"`
+	Entry    string `json:"entry"`
+	Conflict bool   `json:"conflict"`
 }
 
-// BuildReport 将行情快照转换为多周期技术面报告。
-func BuildReport(snapshot *market.Snapshot, mode string) (*Report, error) {
+// Report 是传给 LLM 的完整技术面摘要。
+// Strategy=single 时 Screens 长度为 1、Role=primary；三重滤网时包含三个 screen。
+type Report struct {
+	Symbol      string     `json:"symbol"`
+	Pair        string     `json:"pair"`
+	Quote       string     `json:"quote"`
+	Market      string     `json:"market"`
+	Mode        string     `json:"mode"`
+	Strategy    string     `json:"strategy"`
+	AsOf        time.Time  `json:"as_of"`
+	Price       float64    `json:"price"`
+	ChangePct   float64    `json:"change_pct"`
+	Screens     []Screen   `json:"screens"`
+	Alignment   *Alignment `json:"alignment,omitempty"`
+	DataQuality string     `json:"data_quality"`
+	Source      string     `json:"source"`
+}
+
+// BuildReport 构建单周期报告；timeframe 为空时使用系统默认周期。
+// indicators 为空表示使用默认全部指标；ATR 和支撑阻力始终保留。
+func BuildReport(snapshot *market.Snapshot, mode string, timeframe market.Timeframe, indicators []Indicator) (*Report, error) {
+	if timeframe == "" {
+		timeframe = market.DefaultTimeframe
+	}
+	return BuildStrategyReport(snapshot, mode, StrategySingle,
+		[]ScreenSpec{{Role: "primary", Timeframe: timeframe}}, indicators)
+}
+
+// BuildStrategyReport 按策略声明的 screen 列表构建报告。
+// 某个 screen 缺失或数据不足时降级为 partial，而不是让整次分析失败。
+func BuildStrategyReport(snapshot *market.Snapshot, mode string, strategy Strategy, specs []ScreenSpec, indicators []Indicator) (*Report, error) {
 	if snapshot == nil {
 		return nil, errors.New("行情快照为空")
 	}
-	if len(snapshot.Timeframes) == 0 {
+	if len(snapshot.Series) == 0 {
 		return nil, market.ErrDataUnavailable
+	}
+	if len(specs) == 0 {
+		return nil, errors.New("分析计划没有 screen")
 	}
 
 	report := &Report{
@@ -65,34 +102,109 @@ func BuildReport(snapshot *market.Snapshot, mode string) (*Report, error) {
 		Quote:       snapshot.Symbol.Quote,
 		Market:      snapshot.Symbol.Market,
 		Mode:        mode,
+		Strategy:    string(strategy),
 		AsOf:        snapshot.FetchedAt,
 		Price:       snapshot.Price,
 		ChangePct:   snapshot.ChangePct,
-		Timeframes:  make(map[string]Timeframe, len(snapshot.Timeframes)),
+		Screens:     make([]Screen, 0, len(specs)),
 		DataQuality: "ok",
 		Source:      snapshot.Source,
 	}
 
-	for interval, candles := range snapshot.Timeframes {
-		timeframe, err := analyzeCandles(candles)
-		if err != nil {
+	present := 0
+	alignmentScreens := make([]Screen, 0, len(specs))
+	for _, spec := range specs {
+		screen := Screen{
+			Role:        spec.Role,
+			Timeframe:   spec.Timeframe.String(),
+			AsOf:        snapshot.FetchedAt,
+			DataQuality: "partial",
+		}
+		series, ok := snapshot.Series[spec.Timeframe]
+		if !ok || len(series.Candles) == 0 {
 			report.DataQuality = "partial"
+			report.Screens = append(report.Screens, screen)
 			continue
 		}
-		report.Timeframes[interval] = timeframe
+
+		present++
+		screen.DataQuality = "ok"
+		if !series.AsOf.IsZero() {
+			screen.AsOf = series.AsOf
+		}
+		candles, includesForming := selectCandles(series.Candles, spec.Timeframe, time.Now().UTC())
+		screen.IncludesForming = includesForming
+		if len(candles) > 0 {
+			screen.AsOf = candles[len(candles)-1].OpenTime
+		}
+		analyzed, err := analyzeCandles(candles)
+		if err != nil {
+			// 数据不足时降级为 partial screen，而不是让整次分析失败。
+			screen.DataQuality = "partial"
+			report.DataQuality = "partial"
+		} else {
+			// alignment 使用完整指标；报告只保留用户选择的指标。
+			alignmentScreens = append(alignmentScreens, Screen{
+				Role:       spec.Role,
+				Timeframe:  spec.Timeframe.String(),
+				Indicators: analyzed,
+			})
+			screen.Indicators = filterIndicators(analyzed, indicators)
+			if strategy == StrategyTripleScreen {
+				screen.Indicators = compactIndicators(screen.Indicators)
+			}
+		}
+		if series.Partial {
+			screen.DataQuality = "partial"
+			report.DataQuality = "partial"
+		}
+		report.Screens = append(report.Screens, screen)
 	}
-	if len(report.Timeframes) == 0 {
-		return nil, errors.New("所有周期都缺少足够数据")
+
+	if present == 0 {
+		return nil, fmt.Errorf("%w: 快照缺少所有所需周期", market.ErrDataUnavailable)
 	}
-	if snapshot.Partial {
-		report.DataQuality = "partial"
+	if strategy == StrategyTripleScreen {
+		report.Alignment = computeAlignment(alignmentScreens)
+	}
+	if len(report.Screens) == 1 {
+		report.AsOf = report.Screens[0].AsOf
+	}
+	if report.AsOf.IsZero() {
+		report.AsOf = snapshot.FetchedAt
 	}
 	return report, nil
 }
 
-func analyzeCandles(candles []market.Candle) (Timeframe, error) {
+// compactIndicators 压缩多周期报告，控制提示词长度。
+func compactIndicators(value Indicators) Indicators {
+	value.Support = limit(value.Support, 2)
+	value.Resistance = limit(value.Resistance, 2)
+	return value
+}
+
+// selectCandles 区分已收盘和正在形成的 K 线。
+// 日线及以上默认丢弃正在形成的当前 K 线，避免趋势指标漂移；低周期保留并标记。
+func selectCandles(candles []market.Candle, timeframe market.Timeframe, now time.Time) ([]market.Candle, bool) {
+	if len(candles) == 0 {
+		return candles, false
+	}
+	last := candles[len(candles)-1]
+	forming := !last.CloseTime.IsZero() && last.CloseTime.After(now)
+	if !forming {
+		return candles, false
+	}
+	switch timeframe {
+	case market.TF1D, market.TF1W, market.TF1M:
+		return candles[:len(candles)-1], false
+	default:
+		return candles, true
+	}
+}
+
+func analyzeCandles(candles []market.Candle) (Indicators, error) {
 	if len(candles) < 50 {
-		return Timeframe{}, errors.New("K 线数量不足")
+		return Indicators{}, errors.New("K 线数量不足")
 	}
 
 	closes := make([]float64, len(candles))
@@ -107,7 +219,7 @@ func analyzeCandles(candles []market.Candle) (Timeframe, error) {
 	}
 
 	price := closes[len(closes)-1]
-	result := Timeframe{
+	result := Indicators{
 		Support:    []float64{},
 		Resistance: []float64{},
 	}
@@ -144,6 +256,31 @@ func analyzeCandles(candles []market.Candle) (Timeframe, error) {
 	result.Support, result.Resistance = supportResistance(candles, atr)
 	result.Trend = trend(price, result.EMA20, result.EMA50, result.EMA200)
 	return result, nil
+}
+
+// filterIndicators 只保留用户选择的指标组；trend、ATR 和支撑阻力始终保留。
+func filterIndicators(value Indicators, selection []Indicator) Indicators {
+	if len(selection) == 0 {
+		return value
+	}
+	if !HasIndicator(selection, IndicatorEMA) {
+		value.EMA20 = nil
+		value.EMA50 = nil
+		value.EMA200 = nil
+	}
+	if !HasIndicator(selection, IndicatorRSI) {
+		value.RSI14 = nil
+	}
+	if !HasIndicator(selection, IndicatorMACD) {
+		value.MACDHist = nil
+	}
+	if !HasIndicator(selection, IndicatorSuperTrend) {
+		value.SuperTrend = nil
+	}
+	if !HasIndicator(selection, IndicatorVolume) {
+		value.VolumeRatio = nil
+	}
+	return value
 }
 
 func trend(price float64, ema20, ema50, ema200 *float64) string {

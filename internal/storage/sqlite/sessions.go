@@ -14,8 +14,8 @@ import (
 
 const sessionColumns = `id, user_id, chat_id, scope,
        COALESCE(title, ''), COALESCE(current_symbol, ''), COALESCE(current_market, ''),
-       COALESCE(summary, ''), summary_tokens, COALESCE(last_analysis_json, ''),
-       generation, created_at, last_active_at`
+       COALESCE(current_timeframe, ''), COALESCE(summary, ''), summary_tokens,
+       COALESCE(last_analysis_json, ''), generation, created_at, last_active_at`
 
 // GetOrCreateActivePrivate 返回私聊当前 active 会话；没有时回退到最近一条或创建默认会话。
 func (s *Store) GetOrCreateActivePrivate(ctx context.Context, userID, chatID int64) (*session.Session, error) {
@@ -349,12 +349,12 @@ LIMIT ?`, sessionID, limit)
 }
 
 // SaveAnalysis 保存最近一次分析结果。
-func (s *Store) SaveAnalysis(ctx context.Context, sessionID int64, symbol, market, analysisJSON string) (*session.Session, error) {
+func (s *Store) SaveAnalysis(ctx context.Context, sessionID int64, symbol, market, timeframe, analysisJSON string) (*session.Session, error) {
 	result, err := s.db.ExecContext(ctx, `
 UPDATE sessions
-SET current_symbol = ?, current_market = ?, last_analysis_json = ?,
-    last_active_at = CURRENT_TIMESTAMP
-WHERE id = ?`, symbol, market, analysisJSON, sessionID)
+SET current_symbol = ?, current_market = ?, current_timeframe = ?,
+    last_analysis_json = ?, last_active_at = CURRENT_TIMESTAMP
+WHERE id = ?`, symbol, market, nullableString(timeframe), analysisJSON, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("保存分析上下文: %w", err)
 	}
@@ -404,8 +404,8 @@ func (s *Store) Reset(ctx context.Context, sessionID int64) (*session.Session, e
 
 	result, err := tx.ExecContext(ctx, `
 UPDATE sessions
-SET current_symbol = NULL, current_market = NULL, summary = NULL,
-    summary_tokens = 0, last_analysis_json = NULL,
+SET current_symbol = NULL, current_market = NULL, current_timeframe = NULL,
+    summary = NULL, summary_tokens = 0, last_analysis_json = NULL,
     generation = generation + 1, last_active_at = CURRENT_TIMESTAMP
 WHERE id = ?`, sessionID)
 	if err != nil {
@@ -450,6 +450,7 @@ func scanSession(row rowScanner) (*session.Session, error) {
 		&result.Title,
 		&result.CurrentSymbol,
 		&result.CurrentMarket,
+		&result.CurrentTimeframe,
 		&result.Summary,
 		&result.SummaryTokens,
 		&result.LastAnalysisJSON,

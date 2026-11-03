@@ -40,6 +40,7 @@ type Service struct {
 	maxOutput    int
 	logger       *slog.Logger
 	sem          chan struct{}
+	snapshots    *market.SnapshotCache
 }
 
 // New 创建分析服务。
@@ -66,11 +67,12 @@ func New(
 		maxOutput:    maxOutput,
 		logger:       logger,
 		sem:          make(chan struct{}, maxConcurrency),
+		snapshots:    market.NewSnapshotCache(200),
 	}
 }
 
 // Analyze 对用户输入的币种生成结构化观点。
-func (s *Service) Analyze(ctx context.Context, usr *user.User, apiKey, query, mode string) (*Result, error) {
+func (s *Service) Analyze(ctx context.Context, usr *user.User, apiKey, query, mode string, strategy analysis.Strategy, timeframe market.Timeframe, indicators []analysis.Indicator, sessionID int64) (*Result, error) {
 	if usr == nil {
 		return nil, errors.New("用户配置为空")
 	}
@@ -79,6 +81,9 @@ func (s *Service) Analyze(ctx context.Context, usr *user.User, apiKey, query, mo
 	}
 	if mode != "short" && mode != "swing" {
 		mode = "swing"
+	}
+	if !timeframe.Valid() {
+		timeframe = market.DefaultTimeframe
 	}
 	model := strings.TrimSpace(usr.Model)
 	if model == "" {
@@ -105,11 +110,18 @@ func (s *Service) Analyze(ctx context.Context, usr *user.User, apiKey, query, mo
 		return nil, err
 	}
 
-	snapshot, err := s.provider.Snapshot(ctx, symbol, market.TimeframesForMode(mode))
-	if err != nil {
-		return nil, err
+	timeframes := analysis.Timeframes(strategy, timeframe)
+	snapshot, ok := s.snapshots.GetMany(sessionID, symbol, timeframes)
+	if !ok {
+		snapshot, err = s.provider.Snapshot(ctx, symbol, timeframes)
+		if err != nil {
+			return nil, err
+		}
+		s.snapshots.Put(sessionID, snapshot)
 	}
-	report, err := analysis.BuildReport(snapshot, mode)
+	report, err := analysis.BuildStrategyReport(
+		snapshot, mode, strategy, analysis.ScreenSpecs(strategy, timeframe), indicators,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -144,6 +156,8 @@ func (s *Service) Analyze(ctx context.Context, usr *user.User, apiKey, query, mo
 	s.logger.Info("分析完成",
 		"symbol", report.Symbol,
 		"mode", mode,
+		"strategy", string(strategy),
+		"timeframe", analysis.TimeframeLabel(strategy, timeframe),
 		"model", model,
 		"duration_ms", time.Since(started).Milliseconds(),
 		"prompt_tokens", completion.PromptTokens,

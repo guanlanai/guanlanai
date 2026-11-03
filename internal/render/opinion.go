@@ -7,10 +7,11 @@ import (
 
 	"github.com/guanlanai/guanlanai/internal/agent"
 	"github.com/guanlanai/guanlanai/internal/analysis"
+	"github.com/guanlanai/guanlanai/internal/risk"
 )
 
 // OpinionCard 把结构化观点渲染成 Telegram HTML 卡片。
-func OpinionCard(report *analysis.Report, opinion *agent.Opinion) string {
+func OpinionCard(report *analysis.Report, opinion *agent.Opinion, position *risk.Position) string {
 	if report == nil || opinion == nil {
 		return "分析结果为空。"
 	}
@@ -23,6 +24,10 @@ func OpinionCard(report *analysis.Report, opinion *agent.Opinion) string {
 	builder.WriteString("<b>")
 	builder.WriteString(EscapeHTML(report.Symbol + "/" + quote))
 	builder.WriteString(" · 加密 · ")
+	if timeframe := primaryTimeframe(report); timeframe != "" {
+		builder.WriteString(EscapeHTML(timeframe))
+		builder.WriteString(" · ")
+	}
 	builder.WriteString(modeLabel(report.Mode))
 	builder.WriteString("</b>\n")
 
@@ -50,6 +55,23 @@ func OpinionCard(report *analysis.Report, opinion *agent.Opinion) string {
 	builder.WriteString(formatLevels(opinion.KeyLevels.Resistance))
 	builder.WriteString("\n")
 
+	if report.Strategy == string(analysis.StrategyTripleScreen) && report.Alignment != nil {
+		builder.WriteString("\n<b>多周期</b>\n")
+		builder.WriteString("潮汐：")
+		builder.WriteString(alignmentLabel(report.Alignment.Tide))
+		builder.WriteString("\n波浪：")
+		builder.WriteString(alignmentLabel(report.Alignment.Wave))
+		builder.WriteString("\n涟漪：")
+		builder.WriteString(alignmentLabel(report.Alignment.Entry))
+		builder.WriteString("\n冲突：")
+		if report.Alignment.Conflict {
+			builder.WriteString("是")
+		} else {
+			builder.WriteString("否")
+		}
+		builder.WriteString("\n")
+	}
+
 	if opinion.TradePlan != nil {
 		plan := opinion.TradePlan
 		builder.WriteString("\n<b>计划</b>\n")
@@ -62,6 +84,27 @@ func OpinionCard(report *analysis.Report, opinion *agent.Opinion) string {
 		builder.WriteString("\n盈亏比：")
 		builder.WriteString(strconv.FormatFloat(plan.RiskReward, 'f', 1, 64))
 		builder.WriteString("\n")
+	}
+
+	if position != nil {
+		builder.WriteString("\n<b>仓位</b>\n")
+		builder.WriteString("风险上限：")
+		builder.WriteString(strconv.FormatFloat(position.RiskAmount, 'f', -1, 64))
+		builder.WriteString(" ")
+		builder.WriteString(EscapeHTML(quote))
+		builder.WriteString("\n入场参考：")
+		builder.WriteString(formatPrice(position.EntryPrice))
+		builder.WriteString("\n止损：")
+		builder.WriteString(formatPrice(position.StopLoss))
+		builder.WriteString("\n数量：")
+		builder.WriteString(formatPrice(position.Quantity))
+		builder.WriteString(" ")
+		builder.WriteString(EscapeHTML(report.Symbol))
+		builder.WriteString("\n名义价值：约 ")
+		builder.WriteString(formatPrice(position.Notional))
+		builder.WriteString(" ")
+		builder.WriteString(EscapeHTML(quote))
+		builder.WriteString("\n杠杆：不使用（现货）\n仅按止损距离计算；请确认名义价值不超过可用资金，仅供参考。\n")
 	}
 
 	if strings.TrimSpace(opinion.Summary) != "" {
@@ -99,6 +142,46 @@ func OpinionCard(report *analysis.Report, opinion *agent.Opinion) string {
 	builder.WriteString("\n")
 	builder.WriteString(agent.Disclaimer)
 	return builder.String()
+}
+
+func primaryTimeframe(report *analysis.Report) string {
+	if report.Strategy == string(analysis.StrategyTripleScreen) {
+		return "多周期"
+	}
+	for _, screen := range report.Screens {
+		if screen.Role == "primary" {
+			return screen.Timeframe
+		}
+	}
+	if len(report.Screens) == 1 {
+		return report.Screens[0].Timeframe
+	}
+	return ""
+}
+
+func alignmentLabel(value string) string {
+	switch value {
+	case "up":
+		return "偏多"
+	case "down":
+		return "偏空"
+	case "sideways":
+		return "震荡"
+	case "pullback":
+		return "回调"
+	case "aligned":
+		return "同向"
+	case "against":
+		return "逆向"
+	case "triggered":
+		return "已触发"
+	case "waiting":
+		return "等待"
+	case "unavailable":
+		return "数据缺失"
+	default:
+		return value
+	}
 }
 
 func modeLabel(mode string) string {

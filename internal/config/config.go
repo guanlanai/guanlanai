@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/guanlanai/guanlanai/internal/market"
 )
 
 // Config 是进程的完整运行配置，全部来自环境变量。
@@ -25,6 +27,7 @@ type Config struct {
 	MaxPrivateSessions int
 	GroupsEnabled      bool
 	DefaultMode        string
+	DefaultTimeframe   market.Timeframe
 	DefaultModel       string
 	ModelAllowlist     []string
 	StrictModelList    bool
@@ -70,9 +73,10 @@ func Load() (Config, error) {
 		HTTPAddr:     getenv("HTTP_ADDR", ":8080"),
 		LogLevel:     getenv("LOG_LEVEL", "info"),
 
-		DefaultMode:    getenv("DEFAULT_MODE", "swing"),
-		DefaultModel:   strings.TrimSpace(os.Getenv("DEFAULT_MODEL")),
-		ModelAllowlist: splitCSV(os.Getenv("MODEL_ALLOWLIST")),
+		DefaultMode:      getenv("DEFAULT_MODE", "swing"),
+		DefaultTimeframe: market.DefaultTimeframe,
+		DefaultModel:     strings.TrimSpace(os.Getenv("DEFAULT_MODEL")),
+		ModelAllowlist:   splitCSV(os.Getenv("MODEL_ALLOWLIST")),
 
 		OpenAIBaseURL:   getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 		OpenAIServerKey: strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
@@ -88,7 +92,12 @@ func Load() (Config, error) {
 		cfg.InstanceName = "guanlanai-" + cfg.AppEnv
 	}
 
-	var err error
+	timeframe, err := market.ParseTimeframe(getenv("DEFAULT_TIMEFRAME", market.DefaultTimeframe.String()))
+	if err != nil {
+		return Config{}, fmt.Errorf("DEFAULT_TIMEFRAME 必须是标准周期（%s）: %w", market.TimeframesLabel(), err)
+	}
+	cfg.DefaultTimeframe = timeframe
+
 	if cfg.DataRetentionDays, err = intEnv("DATA_RETENTION_DAYS", 30); err != nil {
 		return Config{}, err
 	}
@@ -171,6 +180,9 @@ func (c Config) validate() error {
 	}
 	if c.DefaultMode != "short" && c.DefaultMode != "swing" {
 		return fmt.Errorf("DEFAULT_MODE 只能是 short/swing，当前为 %q", c.DefaultMode)
+	}
+	if !c.DefaultTimeframe.Valid() {
+		return fmt.Errorf("DEFAULT_TIMEFRAME 必须是标准周期（%s），当前为 %q", market.TimeframesLabel(), c.DefaultTimeframe)
 	}
 
 	if c.MasterKey == "" {

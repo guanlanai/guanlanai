@@ -9,7 +9,7 @@ import (
 var configEnvKeys = []string{
 	"APP_ENV", "INSTANCE_NAME", "TELEGRAM_BOT_TOKEN", "APP_MASTER_KEY",
 	"DATABASE_PATH", "HTTP_ADDR", "LOG_LEVEL",
-	"DEFAULT_MODE", "DEFAULT_MODEL", "MODEL_ALLOWLIST", "STRICT_MODEL_LIST",
+	"DEFAULT_MODE", "DEFAULT_TIMEFRAME", "DEFAULT_MODEL", "MODEL_ALLOWLIST", "STRICT_MODEL_LIST",
 	"OPENAI_BASE_URL", "OPENAI_API_KEY",
 	"BINANCE_BASE_URL", "BINANCE_FALLBACK_BASE_URL", "COINGECKO_BASE_URL",
 	"ALLOW_SERVER_KEY", "ALLOW_CUSTOM_BASE_URL", "CUSTOM_BASE_URL_ALLOWLIST",
@@ -53,6 +53,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DefaultMode != "swing" {
 		t.Fatalf("DefaultMode = %q, want swing", cfg.DefaultMode)
 	}
+	if cfg.DefaultTimeframe != "1D" {
+		t.Fatalf("DefaultTimeframe = %q, want 1D", cfg.DefaultTimeframe)
+	}
 	if cfg.TradingEnabled {
 		t.Fatal("TradingEnabled 默认必须为 false")
 	}
@@ -64,6 +67,28 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.GroupsEnabled {
 		t.Fatal("GroupsEnabled 默认必须为 false")
+	}
+}
+
+func TestLoadNormalizesDefaultTimeframe(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("DEFAULT_TIMEFRAME", "4h")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.DefaultTimeframe != "4h" {
+		t.Fatalf("DefaultTimeframe = %q, want 4h", cfg.DefaultTimeframe)
+	}
+}
+
+func TestLoadRejectsInvalidDefaultTimeframe(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("DEFAULT_TIMEFRAME", "2d")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("非法 DEFAULT_TIMEFRAME 应当报错")
 	}
 }
 

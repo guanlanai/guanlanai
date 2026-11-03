@@ -3,8 +3,12 @@ package text
 import (
 	"fmt"
 	"html"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/guanlanai/guanlanai/internal/analysis"
+	"github.com/guanlanai/guanlanai/internal/market"
 )
 
 const disclaimer = "⚠️ 仅供参考，不构成投资建议。"
@@ -23,6 +27,10 @@ Telegram 加密货币交易分析助手（私聊多会话 · 群组隔离）
 /baseurl - 配置 OpenAI 兼容代理
 /model - 选择模型
 /mode - 切换短线/波段
+/timeframe - 设置常用周期
+/indicators - 设置常用指标
+/risk - 设置每笔最大亏损
+/strategy - 切换单周期/三重滤网
 /status - 运行状态
 /reset - 清空当前会话
 /new [标题] - 新建私聊会话
@@ -57,6 +65,10 @@ func Help() string {
 /baseurl reset - 恢复官方 endpoint
 /model - 查看或切换模型
 /mode - 查看或切换短线/波段
+/timeframe - 查看或设置常用周期
+/indicators - 查看或设置常用指标
+/risk - 查看或设置每笔最大亏损（USDT）
+/strategy - 查看或切换单周期/三重滤网
 
 分析后可以直接追问，例如“那止损呢？”、“如果跌破支撑怎么办？”。
 Key 配置流程：/key → 下一条消息发送 Key → Bot 删除该消息并加密保存。
@@ -67,9 +79,13 @@ Key 配置流程：/key → 下一条消息发送 Key → Bot 删除该消息并
 }
 
 // Status 展示当前实例和用户配置状态。
-func Status(instance, version, env, model, mode, key, endpoint string, uptime time.Duration) string {
+func Status(instance, version, env, model, mode, strategy, timeframe string, timeframeDefault bool, key, endpoint string, uptime time.Duration) string {
 	if model == "" {
 		model = "未配置"
+	}
+	timeframeLabel := timeframe
+	if timeframeDefault {
+		timeframeLabel += "（默认）"
 	}
 	return fmt.Sprintf(`<b>运行状态</b>
 实例：<code>%s</code>
@@ -78,6 +94,8 @@ func Status(instance, version, env, model, mode, key, endpoint string, uptime ti
 运行时长：%s
 模型：<code>%s</code>
 模式：<code>%s</code>
+策略：<code>%s</code>
+周期：<code>%s</code>
 API Key：<code>%s</code>
 Endpoint：<code>%s</code>
 
@@ -92,10 +110,143 @@ Telegram：已连接
 		formatUptime(uptime),
 		html.EscapeString(model),
 		html.EscapeString(mode),
+		html.EscapeString(strategy),
+		html.EscapeString(timeframeLabel),
 		html.EscapeString(key),
 		html.EscapeString(endpoint),
 		disclaimer,
 	)
+}
+
+// TimeframeCurrent 展示用户当前周期和可用周期。
+func TimeframeCurrent(current string, isDefault bool) string {
+	label := current
+	if isDefault {
+		label += "（默认）"
+	}
+	return fmt.Sprintf(`当前周期：<code>%s</code>
+
+可用周期：<code>%s</code>
+
+使用 /timeframe &lt;周期&gt; 设置，例如 /timeframe 4h；发送 /timeframe reset 恢复默认。`,
+		html.EscapeString(label), html.EscapeString(market.TimeframesLabel()))
+}
+
+// TimeframeSet 表示常用周期已保存。
+func TimeframeSet(timeframe string) string {
+	return fmt.Sprintf("常用周期已设置为 <code>%s</code>，下一次分析生效。", html.EscapeString(timeframe))
+}
+
+// TimeframeReset 表示已恢复系统默认周期。
+func TimeframeReset(timeframe string) string {
+	return fmt.Sprintf("已恢复系统默认周期 <code>%s</code>。", html.EscapeString(timeframe))
+}
+
+// TimeframeInvalid 表示周期输入不合法。
+func TimeframeInvalid(available string) string {
+	return fmt.Sprintf("不支持的周期。可用周期：<code>%s</code>", html.EscapeString(available))
+}
+
+// IndicatorsCurrent 展示用户当前指标组和可选指标。
+func IndicatorsCurrent(current string, isDefault bool) string {
+	label := current
+	if isDefault {
+		label += "（默认）"
+	}
+	return fmt.Sprintf(`当前指标：<code>%s</code>
+
+可用指标：<code>%s</code>
+ATR 和支撑阻力属于基础风控指标，始终保留，最多选择 %d 个。
+
+使用 /indicators ema,rsi,macd 设置；发送 /indicators reset 恢复默认。`,
+		html.EscapeString(label), html.EscapeString(analysis.IndicatorsLabel()), analysis.MaxIndicators)
+}
+
+// IndicatorsSet 表示常用指标已保存。
+func IndicatorsSet(indicators string) string {
+	return fmt.Sprintf("常用指标已设置为 <code>%s</code>，下一次分析生效，并优先复用会话已有 K 线。",
+		html.EscapeString(indicators))
+}
+
+// IndicatorsReset 表示已恢复默认指标集合。
+func IndicatorsReset(indicators string) string {
+	return fmt.Sprintf("已恢复默认指标集合 <code>%s</code>。", html.EscapeString(indicators))
+}
+
+// IndicatorsInvalid 表示指标输入不合法。
+func IndicatorsInvalid(reason, available string) string {
+	return fmt.Sprintf("指标设置失败：%s\n可用指标：<code>%s</code>",
+		html.EscapeString(reason), html.EscapeString(available))
+}
+
+// StrategyCurrent 展示当前分析策略。
+func StrategyCurrent(current, tripleLabel string, isDefault bool) string {
+	label := current
+	if isDefault {
+		label += "（默认）"
+	}
+	return fmt.Sprintf(`当前策略：<code>%s</code>
+
+可用策略：
+- <code>single</code> 单周期分析
+- <code>triple</code> 三重滤网（潮汐/波浪/涟漪：%s）
+
+使用 /strategy triple 开启三重滤网，/strategy single 恢复单周期，/strategy reset 恢复默认。`,
+		html.EscapeString(label), html.EscapeString(tripleLabel))
+}
+
+// StrategySet 表示分析策略已保存。
+func StrategySet(triple bool, tripleLabel string) string {
+	if triple {
+		return fmt.Sprintf("分析策略已设置为 <b>三重滤网</b>（%s），下一次分析生效。", html.EscapeString(tripleLabel))
+	}
+	return "分析策略已恢复为 <b>单周期</b>，下一次分析生效。"
+}
+
+// StrategyReset 表示已恢复默认策略。
+func StrategyReset(strategy string) string {
+	return fmt.Sprintf("已恢复默认分析策略：<b>%s</b>。", html.EscapeString(strategy))
+}
+
+// StrategyInvalid 表示策略输入不合法。
+func StrategyInvalid(tripleLabel string) string {
+	return fmt.Sprintf("不支持的分析策略。请使用 /strategy single 或 /strategy triple（%s）。",
+		html.EscapeString(tripleLabel))
+}
+
+// RiskCurrent 展示当前每笔最大亏损。
+func RiskCurrent(amount float64) string {
+	return fmt.Sprintf(`当前每笔最大亏损：<code>%s USDT</code>
+
+仓位会按“风险金额 / |入场价 - 止损价|”计算，不使用杠杆。
+使用 /risk &lt;金额&gt; 修改，例如 /risk 100；发送 /risk reset 清除。`,
+		formatAmount(amount))
+}
+
+// RiskNotSet 表示还没有设置每笔最大亏损。
+func RiskNotSet() string {
+	return `当前未设置每笔最大亏损，因此不会给出仓位建议。
+
+使用 /risk &lt;金额&gt; 设置，例如 /risk 100（单位 USDT）。`
+}
+
+// RiskSet 表示每笔最大亏损已保存。
+func RiskSet(amount float64) string {
+	return fmt.Sprintf("每笔最大亏损已设置为 <code>%s USDT</code>，下一次分析生效。", formatAmount(amount))
+}
+
+// RiskReset 表示已清除每笔最大亏损。
+func RiskReset() string {
+	return "已清除每笔最大亏损，后续分析不再提供仓位建议。"
+}
+
+// RiskInvalid 表示风险金额输入不合法。
+func RiskInvalid() string {
+	return "风险金额不合法。请发送正数金额，例如 /risk 100 或 /risk 100 USDT。"
+}
+
+func formatAmount(amount float64) string {
+	return strconv.FormatFloat(amount, 'f', -1, 64)
 }
 
 // KeyPrompt 提示用户发送 API Key。
@@ -319,25 +470,33 @@ func GroupHelp(botUsername string) string {
 /reset - 清空你在本群的会话
 /help - 本说明
 
-每位成员在本群的上下文互相隔离；Key、模型和模式请在私聊配置。
+每位成员在本群的上下文互相隔离；Key、模型、模式、策略、周期和指标请在私聊配置。
 %s`, html.EscapeString(name), html.EscapeString(name), html.EscapeString(name), disclaimer)
 }
 
 // GroupStatus 展示群组中当前成员的会话状态。
-func GroupStatus(instance, model, mode string) string {
+func GroupStatus(instance, model, mode, strategy, timeframe string, timeframeDefault bool) string {
 	if model == "" {
 		model = "未配置"
+	}
+	timeframeLabel := timeframe
+	if timeframeDefault {
+		timeframeLabel += "（默认）"
 	}
 	return fmt.Sprintf(`<b>本群会话状态</b>
 实例：<code>%s</code>
 模型：<code>%s</code>
 模式：<code>%s</code>
+策略：<code>%s</code>
+周期：<code>%s</code>
 
-每位成员在本群的上下文互相隔离；Key、模型和模式请在私聊配置。
+每位成员在本群的上下文互相隔离；Key、模型、模式、策略、周期和指标请在私聊配置。
 %s`,
 		html.EscapeString(instance),
 		html.EscapeString(model),
 		html.EscapeString(mode),
+		html.EscapeString(strategy),
+		html.EscapeString(timeframeLabel),
 		disclaimer,
 	)
 }
@@ -372,8 +531,9 @@ func NeedModel() string {
 }
 
 // Analyzing 表示正在拉取行情并分析。
-func Analyzing(symbol, mode string) string {
-	return fmt.Sprintf("正在分析 <code>%s</code>（%s）…", html.EscapeString(symbol), modeLabel(mode))
+func Analyzing(symbol, timeframe, mode string) string {
+	return fmt.Sprintf("正在分析 <code>%s</code>（%s · %s）…",
+		html.EscapeString(symbol), html.EscapeString(timeframe), modeLabel(mode))
 }
 
 // AnalysisError 返回用户可读的分析失败原因。
