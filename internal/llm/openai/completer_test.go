@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -100,6 +101,44 @@ func TestCompleteOmitsTemperatureForReasoningModel(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
+	}
+}
+
+func TestCompleteEmptyContent(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": "chatcmpl-test",
+			"object": "chat.completion",
+			"created": 1,
+			"model": "gpt-5-mini",
+			"choices": [{"index": 0, "finish_reason": "length", "message": {"role": "assistant", "content": ""}}],
+			"usage": {
+				"prompt_tokens": 10,
+				"completion_tokens": 1600,
+				"total_tokens": 1610,
+				"completion_tokens_details": {"reasoning_tokens": 1600}
+			}
+		}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	completer := NewCompleter(netguard.Policy{AllowHTTP: true, AllowPrivate: true}, 5*time.Second)
+	_, err := completer.Complete(context.Background(), llm.CompletionRequest{
+		BaseURL:         server.URL + "/v1",
+		APIKey:          "sk-test",
+		Model:           "gpt-5-mini",
+		System:          "system",
+		User:            "user",
+		MaxOutputTokens: 1600,
+	})
+	if !errors.Is(err, llm.ErrEmptyResponse) {
+		t.Fatalf("Complete() error = %v, want ErrEmptyResponse", err)
+	}
+	if !strings.Contains(err.Error(), "finish_reason=length") || !strings.Contains(err.Error(), "reasoning_tokens=1600") {
+		t.Fatalf("空响应错误缺少诊断信息: %v", err)
 	}
 }
 

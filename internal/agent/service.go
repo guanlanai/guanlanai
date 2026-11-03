@@ -192,13 +192,13 @@ func (s *Service) Chat(ctx context.Context, usr *user.User, apiKey, question, co
 	defer s.release()
 
 	prompt := "以下是最新的分析上下文：\n" + contextText + "\n\n用户追问：" + question
-	completion, err := s.completeWithSystem(ctx, baseURL, apiKey, model, ChatSystemPrompt, prompt, false, 1600)
+	completion, err := s.completeWithSystem(ctx, baseURL, apiKey, model, ChatSystemPrompt, prompt, false, s.maxOutput)
 	if err != nil {
 		return nil, err
 	}
 	content := strings.TrimSpace(completion.Content)
 	if content == "" {
-		return nil, errors.New("模型返回空回答")
+		return nil, fmt.Errorf("%w: 模型返回空回答", llm.ErrEmptyResponse)
 	}
 	return &ChatResult{Content: content, Usage: completion}, nil
 }
@@ -243,7 +243,7 @@ func (s *Service) Summarize(ctx context.Context, usr *user.User, apiKey, existin
 	}
 	content := strings.TrimSpace(completion.Content)
 	if content == "" {
-		return nil, errors.New("模型返回空摘要")
+		return nil, fmt.Errorf("%w: 模型返回空摘要", llm.ErrEmptyResponse)
 	}
 	return &ChatResult{Content: content, Usage: completion}, nil
 }

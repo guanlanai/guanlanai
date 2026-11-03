@@ -1232,6 +1232,8 @@ func reason(err error) string {
 		return "请先使用 /model 选择模型"
 	case errors.Is(err, agent.ErrInvalidOutput):
 		return "模型输出格式异常，请重试或换一个模型"
+	case errors.Is(err, llm.ErrEmptyResponse):
+		return "模型没有返回有效内容，请稍后重试；如果持续出现，请换一个模型"
 	case errors.Is(err, netguard.ErrInsecureScheme):
 		return "必须使用 https"
 	case errors.Is(err, netguard.ErrPrivateAddress):

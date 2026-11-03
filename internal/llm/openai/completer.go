@@ -101,7 +101,13 @@ func (c *Completer) Complete(ctx context.Context, req llm.CompletionRequest) (*l
 	}
 	content := strings.TrimSpace(response.Choices[0].Message.Content)
 	if content == "" {
-		return nil, errors.New("模型返回空内容")
+		choice := response.Choices[0]
+		return nil, fmt.Errorf("%w: finish_reason=%s completion_tokens=%d reasoning_tokens=%d",
+			llm.ErrEmptyResponse,
+			choice.FinishReason,
+			response.Usage.CompletionTokens,
+			response.Usage.CompletionTokensDetails.ReasoningTokens,
+		)
 	}
 
 	return &llm.CompletionResponse{

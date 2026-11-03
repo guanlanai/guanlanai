@@ -12,6 +12,8 @@ var (
 	ErrModelsUnavailable = errors.New("endpoint 不支持 /models")
 	// ErrValidationUnavailable 表示暂时无法完成校验（限流、网络、服务端错误）。
 	ErrValidationUnavailable = errors.New("暂时无法校验 API Key")
+	// ErrEmptyResponse 表示上游返回成功但正文为空（常见于 reasoning tokens 耗尽输出预算）。
+	ErrEmptyResponse = errors.New("模型返回空内容")
 )
 
 // Validator 负责校验用户 Key 和列出模型。

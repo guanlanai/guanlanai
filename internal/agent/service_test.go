@@ -132,6 +132,28 @@ func TestAnalyzeRetriesInvalidOutput(t *testing.T) {
 	}
 }
 
+func TestChatUsesConfiguredMaxOutput(t *testing.T) {
+	completer := &fakeCompleter{responses: []string{"answer"}}
+	service := New(fakeResolver{}, fakeProvider{}, completer, "", 4000, 4, testLogger())
+
+	if _, err := service.Chat(context.Background(), testUser(), "sk-test", "能分析超级趋势吗", "context"); err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if len(completer.requests) != 1 || completer.requests[0].MaxOutputTokens != 4000 {
+		t.Fatalf("Chat MaxOutputTokens = %#v", completer.requests)
+	}
+}
+
+func TestChatEmptyResponse(t *testing.T) {
+	completer := &fakeCompleter{responses: []string{""}}
+	service := New(fakeResolver{}, fakeProvider{}, completer, "", 4000, 4, testLogger())
+
+	_, err := service.Chat(context.Background(), testUser(), "sk-test", "问题", "context")
+	if !errors.Is(err, llm.ErrEmptyResponse) {
+		t.Fatalf("Chat() error = %v, want ErrEmptyResponse", err)
+	}
+}
+
 func TestAnalyzeInvalidOutput(t *testing.T) {
 	completer := &fakeCompleter{responses: []string{`{"bad":true}`, `{"bad":true}`}}
 	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, 4, testLogger())
