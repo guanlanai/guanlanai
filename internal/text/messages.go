@@ -506,6 +506,11 @@ func FollowUpNeedAnalysis() string {
 	return "当前没有可追问的分析。请先发送币种代码，例如 <code>BTC</code>。"
 }
 
+// QuestionTooLong 提示追问文本超过长度限制。
+func QuestionTooLong(limit int) string {
+	return fmt.Sprintf("问题太长。请控制在 %d 个字符以内，或先 /reset 再重新提问。", limit)
+}
+
 // RateLimited 提示限流。
 func RateLimited(retryAfter time.Duration) string {
 	seconds := int(retryAfter.Seconds())

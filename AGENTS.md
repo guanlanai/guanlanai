@@ -108,6 +108,7 @@ guanlanai backup       # VACUUM INTO 备份，容器内用 docker compose exec
 - 用户自定义 `base_url` 必须做 SSRF 防护：仅 HTTPS、拒绝私网/回环/链路本地地址、禁止重定向、限制响应大小和超时。
 - `.env` 和任何密钥都不入库。
 - 交易观点必须附风险提示，不能表述为投资建议；暂不专门做合规审查，但对外文案保留免责声明。
+- 提示词注入防护、当前安全边界和 P1 待办见 `docs/SECURITY.md`；不要把安全只寄托在提示词上。
 
 ## 验证
 

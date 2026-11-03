@@ -16,5 +16,5 @@ func New(level string) (*slog.Logger, error) {
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: l,
 	})
-	return slog.New(handler), nil
+	return slog.New(&redactingHandler{next: handler}), nil
 }

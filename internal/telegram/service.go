@@ -43,6 +43,9 @@ var modelNamePattern = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,100}$`)
 // streamEditInterval 控制流式编辑的最小间隔，避免触发 Telegram 限流。
 var streamEditInterval = 1200 * time.Millisecond
 
+// maxFollowUpRunes 限制单条追问长度，避免一次请求塞入过多文本。
+const maxFollowUpRunes = 2000
+
 // MessageDeleter 用于删除包含 Key 的消息，方便测试时替换。
 type MessageDeleter interface {
 	DeleteMessage(ctx context.Context, params *bot.DeleteMessageParams) (bool, error)
@@ -451,6 +454,10 @@ func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.Use
 func (s *Service) handleFollowUp(ctx context.Context, chatID int64, usr *user.User, sess *session.Session, question string, scope session.Scope) {
 	if sess == nil || sess.LastAnalysisJSON == "" {
 		s.send(ctx, chatID, text.FollowUpNeedAnalysis())
+		return
+	}
+	if len([]rune(question)) > maxFollowUpRunes {
+		s.send(ctx, chatID, text.QuestionTooLong(maxFollowUpRunes))
 		return
 	}
 	if !usr.HasKey() {
@@ -1646,6 +1653,8 @@ func reason(err error) string {
 		return "请先使用 /model 选择模型"
 	case errors.Is(err, agent.ErrInvalidOutput):
 		return "模型输出格式异常，请重试或换一个模型"
+	case errors.Is(err, agent.ErrPromptTooLong):
+		return "输入或上下文超出预算，请缩短问题，或 /reset 后重试"
 	case errors.Is(err, llm.ErrEmptyResponse):
 		return "模型没有返回有效内容，请稍后重试；如果持续出现，请换一个模型"
 	case errors.Is(err, netguard.ErrInsecureScheme):

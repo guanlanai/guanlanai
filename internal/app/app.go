@@ -72,6 +72,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		cfg.LLMMaxConcurrency,
 		logger,
 		agent.WithMaxToolRounds(cfg.AgentMaxToolRounds),
+		agent.WithMaxPromptTokens(cfg.MaxPromptTokens),
 		agent.WithStreaming(cfg.LLMStreaming),
 	)
 	limiter := ratelimit.New(cfg.AnalysisRatePerMin, cfg.AnalysisRatePerHour, cfg.ChatRatePerMin)

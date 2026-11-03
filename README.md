@@ -41,3 +41,4 @@ make docker            # 构建本机架构镜像
 - 上线验收报告见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)
 - 私聊多会话/群组会话设计见 [docs/SESSION_DESIGN.md](docs/SESSION_DESIGN.md)
 - 分析周期与个人偏好设计见 [docs/ANALYSIS_PROFILE_DESIGN.md](docs/ANALYSIS_PROFILE_DESIGN.md)
+- 安全边界、提示词注入防护与 P1 待办见 [docs/SECURITY.md](docs/SECURITY.md)
