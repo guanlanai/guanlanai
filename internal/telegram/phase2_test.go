@@ -362,7 +362,7 @@ func (f *fakeAnalyzer) Analyze(_ context.Context, _ *user.User, _, query, mode s
 	return f.result, f.err
 }
 
-func (f *fakeAnalyzer) Chat(_ context.Context, _ *user.User, _, _, _ string) (*agent.ChatResult, error) {
+func (f *fakeAnalyzer) Chat(_ context.Context, _ *user.User, _, _, _ string, _ int64) (*agent.ChatResult, error) {
 	return &agent.ChatResult{Content: "answer"}, f.err
 }
 

@@ -36,6 +36,9 @@ guanlanai backup       # VACUUM INTO 备份，容器内用 docker compose exec
 - Telegram：`github.com/go-telegram/bot`。
 - 行情：Binance USDT 现货为主，默认 `BINANCE_BASE_URL=https://data-api.binance.vision`；`api.binance.com` 在当前 VPS 返回 451。Phase 3 先只实现 Binance，CoinGecko 兜底为低优先级、暂不实现；MVP 不接股票行情源。
 - LLM：官方 `github.com/openai/openai-go` + 自写薄 Agent 循环；走 Chat Completions 兼容协议，不要依赖 Responses API。不要引入 langchaingo、eino 等第二套 Agent 框架。
+- 追问 Agent 只注册只读工具（`resolve_symbol`、`get_market_snapshot`、`get_technical_analysis`），默认最多 `AGENT_MAX_TOOL_ROUNDS=3` 轮；绝不注册交易/账户/转账工具。
+- 分析输出优先 `response_format=json_schema`，代理不支持时降级 `json_object`；无论哪种模式都必须过本地 `ParseOpinion` 校验。
+- 追问默认流式（`LLM_STREAMING=true`），Telegram 用 `editMessageText` 增量更新；不支持流式或编辑时回退普通发送。
 - 模型列表来自用户 endpoint 的 `GET /models`，不是写死的；`STRICT_MODEL_LIST=true`（默认）要求模型必须出现在该列表，代理不支持 `/models` 时才设为 false。
 - `gpt-5` 等推理模型的 `completion_tokens` 包含 reasoning tokens；`MAX_OUTPUT_TOKENS` 生产环境用 4000，避免 JSON 被截断。
 - 配置走环境变量，本地用 `.env`（已 gitignore）。约定名称：`TELEGRAM_BOT_TOKEN`、`APP_MASTER_KEY`、`OPENAI_API_KEY`（仅本地开发回退；正常流程使用用户自己的 Key）。
@@ -115,4 +118,5 @@ make test
 make test-race
 make build
 go test ./internal/config -run TestName # 单个测试
+go test ./internal/agent -run TestGoldenCases # 固定 fixture 的 Agent 回归基线
 ```

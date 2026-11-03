@@ -1,0 +1,189 @@
+{
+  "candles": {
+    "count": 300,
+    "start": 100,
+    "drift": 1.2,
+    "amplitude": 4,
+    "period": 18
+  },
+  "cases": [
+    {
+      "name": "single_1d_bullish",
+      "query": "BTC",
+      "strategy": "single",
+      "timeframe": "1D",
+      "mode": "swing",
+      "trend": "up",
+      "want_direction": "bullish",
+      "want_timeframes": ["1D"],
+      "want_prompt_contains": ["\"strategy\":\"single\"", "\"timeframe\":\"1D\"", "\"as_of\""],
+      "opinion": {
+        "symbol": "BTC",
+        "pair": "BTCUSDT",
+        "market": "crypto",
+        "mode": "swing",
+        "direction": "bullish",
+        "confidence": "medium",
+        "summary": "单周期趋势向上",
+        "key_levels": {"support": [100], "resistance": [500]},
+        "trade_plan": {
+          "entry_low": 110,
+          "entry_high": 120,
+          "stop_loss": 100,
+          "take_profit": [150],
+          "risk_reward": 2.0
+        },
+        "reasons": ["EMA 多头排列"],
+        "risks": ["跌破止损则失效"],
+        "data_as_of": "2026-11-02T00:00:00Z",
+        "disclaimer": "仅供参考"
+      }
+    },
+    {
+      "name": "single_4h_bearish",
+      "query": "ETH",
+      "strategy": "single",
+      "timeframe": "4h",
+      "mode": "short",
+      "trend": "down",
+      "want_direction": "bearish",
+      "want_timeframes": ["4h"],
+      "want_prompt_contains": ["\"strategy\":\"single\"", "\"timeframe\":\"4h\"", "\"mode\":\"short\""],
+      "opinion": {
+        "symbol": "ETH",
+        "pair": "ETHUSDT",
+        "market": "crypto",
+        "mode": "short",
+        "direction": "bearish",
+        "confidence": "high",
+        "summary": "单周期趋势向下",
+        "key_levels": {"support": [100], "resistance": [400]},
+        "trade_plan": {
+          "entry_low": 200,
+          "entry_high": 210,
+          "stop_loss": 220,
+          "take_profit": [180, 170],
+          "risk_reward": 2.0
+        },
+        "reasons": ["EMA 空头排列"],
+        "risks": ["突破止损则失效"],
+        "data_as_of": "2026-11-02T00:00:00Z",
+        "disclaimer": "仅供参考"
+      }
+    },
+    {
+      "name": "single_neutral_without_plan",
+      "query": "SOL",
+      "strategy": "single",
+      "timeframe": "1h",
+      "mode": "swing",
+      "trend": "flat",
+      "want_direction": "neutral",
+      "want_timeframes": ["1h"],
+      "want_prompt_contains": ["\"strategy\":\"single\"", "\"timeframe\":\"1h\""],
+      "opinion": {
+        "symbol": "SOL",
+        "pair": "SOLUSDT",
+        "market": "crypto",
+        "mode": "swing",
+        "direction": "neutral",
+        "confidence": "low",
+        "summary": "方向不明，等待突破",
+        "key_levels": {"support": [100], "resistance": [200]},
+        "reasons": ["趋势指标互相冲突"],
+        "risks": ["突破后可能快速波动"],
+        "data_as_of": "2026-11-02T00:00:00Z",
+        "disclaimer": "仅供参考"
+      }
+    },
+    {
+      "name": "triple_screen_aligned_bullish",
+      "query": "BTC",
+      "strategy": "triple",
+      "timeframe": "4h",
+      "mode": "swing",
+      "trend": "up",
+      "want_direction": "bullish",
+      "want_timeframes": ["1W", "1D", "1h"],
+      "want_prompt_contains": ["\"strategy\":\"triple_screen\"", "\"alignment\"", "\"tide\"", "\"wave\"", "\"entry\""],
+      "opinion": {
+        "symbol": "BTC",
+        "pair": "BTCUSDT",
+        "market": "crypto",
+        "mode": "swing",
+        "direction": "bullish",
+        "confidence": "medium",
+        "summary": "三重滤网一致偏多",
+        "key_levels": {"support": [100], "resistance": [500]},
+        "trade_plan": {
+          "entry_low": 110,
+          "entry_high": 120,
+          "stop_loss": 100,
+          "take_profit": [150],
+          "risk_reward": 2.0
+        },
+        "reasons": ["潮汐、波浪、涟漪方向一致"],
+        "risks": ["跌破潮汐周期失效"],
+        "data_as_of": "2026-11-02T00:00:00Z",
+        "disclaimer": "仅供参考"
+      }
+    },
+    {
+      "name": "triple_screen_conflict_neutral",
+      "query": "BTC",
+      "strategy": "triple",
+      "timeframe": "1h",
+      "mode": "swing",
+      "trend": "flat",
+      "want_direction": "neutral",
+      "want_timeframes": ["1W", "1D", "1h"],
+      "want_prompt_contains": ["\"strategy\":\"triple_screen\"", "\"conflict\""],
+      "opinion": {
+        "symbol": "BTC",
+        "pair": "BTCUSDT",
+        "market": "crypto",
+        "mode": "swing",
+        "direction": "neutral",
+        "confidence": "low",
+        "summary": "跨周期冲突，观望",
+        "key_levels": {"support": [100], "resistance": [400]},
+        "reasons": ["潮汐与涟漪方向冲突"],
+        "risks": ["冲突未解决前不宜追单"],
+        "data_as_of": "2026-11-02T00:00:00Z",
+        "disclaimer": "仅供参考"
+      }
+    },
+    {
+      "name": "invalid_bullish_stop_above_entry",
+      "query": "BTC",
+      "strategy": "single",
+      "timeframe": "1D",
+      "mode": "swing",
+      "trend": "up",
+      "want_error": "invalid_output",
+      "want_timeframes": ["1D"],
+      "want_prompt_contains": ["\"strategy\":\"single\""],
+      "opinion": {
+        "symbol": "BTC",
+        "pair": "BTCUSDT",
+        "market": "crypto",
+        "mode": "swing",
+        "direction": "bullish",
+        "confidence": "medium",
+        "summary": "止损方向错误",
+        "key_levels": {"support": [100], "resistance": [500]},
+        "trade_plan": {
+          "entry_low": 100,
+          "entry_high": 110,
+          "stop_loss": 120,
+          "take_profit": [150],
+          "risk_reward": 2.0
+        },
+        "reasons": ["测试用非法交易计划"],
+        "risks": ["本地校验应拒绝"],
+        "data_as_of": "2026-11-02T00:00:00Z",
+        "disclaimer": "仅供参考"
+      }
+    }
+  ]
+}

@@ -40,6 +40,9 @@ import (
 
 var modelNamePattern = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,100}$`)
 
+// streamEditInterval 控制流式编辑的最小间隔，避免触发 Telegram 限流。
+var streamEditInterval = 1200 * time.Millisecond
+
 // MessageDeleter 用于删除包含 Key 的消息，方便测试时替换。
 type MessageDeleter interface {
 	DeleteMessage(ctx context.Context, params *bot.DeleteMessageParams) (bool, error)
@@ -48,14 +51,21 @@ type MessageDeleter interface {
 // Analyzer 生成行情观点、回答追问并压缩上下文。
 type Analyzer interface {
 	Analyze(ctx context.Context, usr *user.User, apiKey, query, mode string, strategy analysis.Strategy, timeframe market.Timeframe, indicators []analysis.Indicator, sessionID int64) (*agent.Result, error)
-	Chat(ctx context.Context, usr *user.User, apiKey, question, contextText string) (*agent.ChatResult, error)
+	Chat(ctx context.Context, usr *user.User, apiKey, question, contextText string, sessionID int64) (*agent.ChatResult, error)
 	Summarize(ctx context.Context, usr *user.User, apiKey, existingSummary string, messages []session.Message) (*agent.ChatResult, error)
+}
+
+// StreamingAnalyzer 是可选能力：支持流式回答的 Analyzer。
+// 用类型断言启用，避免所有测试替身都被迫实现流式接口。
+type StreamingAnalyzer interface {
+	ChatStream(ctx context.Context, usr *user.User, apiKey, question, contextText string, sessionID int64, onDelta func(string) error) (*agent.ChatResult, error)
 }
 
 // Service 负责 Telegram 长轮询、命令路由、用户配置和消息发送。
 type Service struct {
 	bot        *bot.Bot
 	sender     render.Sender
+	editor     MessageEditor
 	deleter    MessageDeleter
 	cfg        config.Config
 	logger     *slog.Logger
@@ -138,6 +148,9 @@ func New(
 
 	s.bot = b
 	s.sender = NewRateLimitedSender(b, time.Second, 25, 2)
+	if editor, ok := s.sender.(MessageEditor); ok {
+		s.editor = editor
+	}
 	s.deleter = b
 	return s, nil
 }
@@ -219,6 +232,7 @@ func (s *Service) handle(ctx context.Context, update *models.Update) {
 	raw := strings.TrimSpace(msg.Text)
 	command, args := parseCommand(raw)
 	scope := scopeForChat(msg.Chat.Type)
+	ctx, traceID := logging.EnsureTrace(ctx)
 
 	usr, err := s.ensureUser(ctx, msg)
 	if err != nil {
@@ -242,6 +256,7 @@ func (s *Service) handle(ctx context.Context, update *models.Update) {
 	}
 
 	s.logger.Info("处理 Telegram 消息",
+		"trace_id", traceID,
 		"chat", logging.HashID(msg.Chat.ID),
 		"chat_type", msg.Chat.Type,
 		"command", command,
@@ -518,12 +533,11 @@ func (s *Service) handleFollowUp(ctx context.Context, chatID int64, usr *user.Us
 		}
 	}
 
-	s.send(ctx, chatID, text.Thinking())
 	started := time.Now()
-	result, err := s.analyzer.Chat(ctx, usr, key, question, contextBuilder.String())
+	result, err := s.answerFollowUp(ctx, chatID, usr, key, question, contextBuilder.String(), sess.ID)
 	if err != nil {
 		s.recordUsage(ctx, usr, "chat", model, nil, time.Since(started), "error")
-		s.logger.Error("追问失败", "chat", logging.HashID(chatID), "error", err)
+		s.logger.Error("追问失败", "trace_id", logging.TraceID(ctx), "chat", logging.HashID(chatID), "error", err)
 		s.send(ctx, chatID, text.AnalysisError(reason(err)))
 		return
 	}
@@ -531,7 +545,102 @@ func (s *Service) handleFollowUp(ctx context.Context, chatID int64, usr *user.Us
 	_ = s.sessions.AppendMessage(ctx, sess.ID, "user", question, estimateTokens(question))
 	_ = s.sessions.AppendMessage(ctx, sess.ID, "assistant", result.Content, estimateTokens(result.Content))
 	s.recordUsage(ctx, usr, "chat", model, result.Usage, time.Since(started), "ok")
-	s.send(ctx, chatID, render.EscapeHTML(result.Content))
+}
+
+// answerFollowUp 优先使用流式输出；不支持流式时退回普通 Chat。
+func (s *Service) answerFollowUp(ctx context.Context, chatID int64, usr *user.User, key, question, contextText string, sessionID int64) (*agent.ChatResult, error) {
+	streamer, ok := s.analyzer.(StreamingAnalyzer)
+	if !ok || s.editor == nil {
+		s.send(ctx, chatID, text.Thinking())
+		result, err := s.analyzer.Chat(ctx, usr, key, question, contextText, sessionID)
+		if err == nil {
+			s.send(ctx, chatID, render.EscapeHTML(result.Content))
+		}
+		return result, err
+	}
+
+	placeholder, err := s.sender.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:    chatID,
+		Text:      text.Thinking(),
+		ParseMode: models.ParseModeHTML,
+	})
+	if err != nil || placeholder == nil {
+		result, chatErr := s.analyzer.Chat(ctx, usr, key, question, contextText, sessionID)
+		if chatErr == nil {
+			s.send(ctx, chatID, render.EscapeHTML(result.Content))
+		}
+		return result, chatErr
+	}
+
+	var builder strings.Builder
+	lastEdit := time.Time{}
+	lastRunes := 0
+	onDelta := func(delta string) error {
+		builder.WriteString(delta)
+		if time.Since(lastEdit) < streamEditInterval {
+			return nil
+		}
+		content := builder.String()
+		runes := len([]rune(content))
+		if runes == lastRunes {
+			return nil
+		}
+		lastEdit = time.Now()
+		lastRunes = runes
+		if err := s.editStreaming(ctx, chatID, placeholder.ID, content); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			s.logger.Debug("流式编辑失败，继续生成", "trace_id", logging.TraceID(ctx), "chat", logging.HashID(chatID), "error", err)
+		}
+		return nil
+	}
+
+	result, err := streamer.ChatStream(ctx, usr, key, question, contextText, sessionID, onDelta)
+	if err != nil {
+		return nil, err
+	}
+	if result.Content != "" {
+		if err := s.finalizeStream(ctx, chatID, placeholder.ID, result.Content); err != nil {
+			s.logger.Warn("更新流式消息失败", "trace_id", logging.TraceID(ctx), "chat", logging.HashID(chatID), "error", err)
+		}
+	}
+	return result, nil
+}
+
+func (s *Service) editStreaming(ctx context.Context, chatID int64, messageID int, content string) error {
+	chunks := render.Split(content, render.MaxMessageRunes)
+	if len(chunks) == 0 {
+		return nil
+	}
+	return s.editStreamingText(ctx, chatID, messageID, chunks[0])
+}
+
+func (s *Service) editStreamingText(ctx context.Context, chatID int64, messageID int, content string) error {
+	_, err := s.editor.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Text:      render.EscapeHTML(content),
+		ParseMode: models.ParseModeHTML,
+	})
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "message is not modified") {
+		return nil
+	}
+	return err
+}
+
+func (s *Service) finalizeStream(ctx context.Context, chatID int64, messageID int, content string) error {
+	chunks := render.Split(content, render.MaxMessageRunes)
+	if len(chunks) == 0 {
+		return nil
+	}
+	if err := s.editStreamingText(ctx, chatID, messageID, chunks[0]); err != nil {
+		return err
+	}
+	for _, chunk := range chunks[1:] {
+		s.send(ctx, chatID, render.EscapeHTML(chunk))
+	}
+	return nil
 }
 
 func (s *Service) handleReset(ctx context.Context, chatID int64, sess *session.Session) {
@@ -775,11 +884,14 @@ func (s *Service) recordUsage(ctx context.Context, usr *user.User, kind, model s
 	}
 	event := usage.Event{
 		UserID:    usr.ID,
-		RequestID: fmt.Sprintf("%d", time.Now().UnixNano()),
+		RequestID: logging.TraceID(ctx),
 		Kind:      kind,
 		Model:     model,
 		LatencyMS: int(latency.Milliseconds()),
 		Status:    status,
+	}
+	if event.RequestID == "" {
+		event.RequestID = fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	if completion != nil {
 		event.PromptTokens = completion.PromptTokens

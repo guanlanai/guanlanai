@@ -255,7 +255,7 @@ func TestChatUsesConfiguredMaxOutput(t *testing.T) {
 	completer := &fakeCompleter{responses: []string{"answer"}}
 	service := New(fakeResolver{}, fakeProvider{}, completer, "", 4000, 4, testLogger())
 
-	if _, err := service.Chat(context.Background(), testUser(), "sk-test", "能分析超级趋势吗", "context"); err != nil {
+	if _, err := service.Chat(context.Background(), testUser(), "sk-test", "能分析超级趋势吗", "context", 0); err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
 	if len(completer.requests) != 1 || completer.requests[0].MaxOutputTokens != 4000 {
@@ -267,7 +267,7 @@ func TestChatEmptyResponse(t *testing.T) {
 	completer := &fakeCompleter{responses: []string{""}}
 	service := New(fakeResolver{}, fakeProvider{}, completer, "", 4000, 4, testLogger())
 
-	_, err := service.Chat(context.Background(), testUser(), "sk-test", "问题", "context")
+	_, err := service.Chat(context.Background(), testUser(), "sk-test", "问题", "context", 0)
 	if !errors.Is(err, llm.ErrEmptyResponse) {
 		t.Fatalf("Chat() error = %v, want ErrEmptyResponse", err)
 	}
@@ -298,7 +298,7 @@ func TestChatAndSummarize(t *testing.T) {
 	completer := &fakeCompleter{responses: []string{"追问回答", "会话摘要"}}
 	service := New(fakeResolver{}, fakeProvider{}, completer, "", 1200, 4, testLogger())
 
-	chat, err := service.Chat(context.Background(), testUser(), "sk-test", "那止损呢？", "最近分析：{}")
+	chat, err := service.Chat(context.Background(), testUser(), "sk-test", "那止损呢？", "最近分析：{}", 0)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}

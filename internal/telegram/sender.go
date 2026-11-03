@@ -15,6 +15,11 @@ import (
 	"github.com/guanlanai/guanlanai/internal/render"
 )
 
+// MessageEditor 是编辑消息所需的最小接口，用于流式更新。
+type MessageEditor interface {
+	EditMessageText(ctx context.Context, params *bot.EditMessageTextParams) (*models.Message, error)
+}
+
 // RateLimitedSender 为 Telegram 发送增加每 chat 限速、全局限速和 429 重试。
 type RateLimitedSender struct {
 	next     render.Sender
@@ -47,7 +52,24 @@ func NewRateLimitedSender(next render.Sender, perChat time.Duration, globalPerSe
 
 func (s *RateLimitedSender) SendMessage(ctx context.Context, params *bot.SendMessageParams) (*models.Message, error) {
 	chatID, _ := params.ChatID.(int64)
+	return s.do(ctx, chatID, func() (*models.Message, error) {
+		return s.next.SendMessage(ctx, params)
+	})
+}
 
+// EditMessageText 编辑已发送消息，与发送共享同一套限速和重试策略。
+func (s *RateLimitedSender) EditMessageText(ctx context.Context, params *bot.EditMessageTextParams) (*models.Message, error) {
+	editor, ok := s.next.(MessageEditor)
+	if !ok {
+		return nil, errors.New("当前 sender 不支持编辑消息")
+	}
+	chatID, _ := params.ChatID.(int64)
+	return s.do(ctx, chatID, func() (*models.Message, error) {
+		return editor.EditMessageText(ctx, params)
+	})
+}
+
+func (s *RateLimitedSender) do(ctx context.Context, chatID int64, call func() (*models.Message, error)) (*models.Message, error) {
 	var lastErr error
 	for attempt := 0; attempt <= s.retries; attempt++ {
 		if err := s.waitChat(ctx, chatID); err != nil {
@@ -57,7 +79,7 @@ func (s *RateLimitedSender) SendMessage(ctx context.Context, params *bot.SendMes
 			return nil, err
 		}
 
-		response, err := s.next.SendMessage(ctx, params)
+		response, err := call()
 		if err == nil {
 			return response, nil
 		}

@@ -28,7 +28,7 @@ func (f *fakeSender) SendMessage(_ context.Context, params *bot.SendMessageParam
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.messages = append(f.messages, params)
-	return &models.Message{}, nil
+	return &models.Message{ID: len(f.messages)}, nil
 }
 
 func (f *fakeSender) count() int {

@@ -22,6 +22,8 @@ Phase 5 已部署：新增 `guanlanai backup`（SQLite `VACUUM INTO`）、观点
 
 会话模型 Phase A/B 已部署到 prod/staging：私聊多会话（`/new`、`/sessions`、`/switch`、`/rename`、`/delete`）和群组按成员隔离会话；镜像 `guanlanai:sessions-v4`，群组通过 `GROUPS_ENABLED=true` 开启。
 
+Agent 能力已增强：追问支持最多 3 轮只读工具调用（行情快照、技术分析、代码解析），分析输出优先使用 JSON Schema 并保留本地校验兜底，追问支持 Telegram 流式编辑；每个请求带 `trace_id`，并新增固定 fixture 的 golden-case 回归测试。对应配置为 `AGENT_MAX_TOOL_ROUNDS` 和 `LLM_STREAMING`。
+
 ## 开发
 
 ```sh

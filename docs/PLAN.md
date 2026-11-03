@@ -429,17 +429,20 @@ type Request struct {
 - OpenAI 实现负责把 `JSONSchema` 映射到 `response_format=json_schema`；代理/模型不支持时降级为 `json_object` + 本地校验，再不行则只返回文本并走降级渲染。
 - 模型列表：优先 `GET {base_url}/models`；代理不支持时允许手动输入模型名，但必须先做一次最小 Chat Completions 校验。全局 `MODEL_ALLOWLIST` 仍然生效。
 - 未来加厂商只需实现 `Provider`，agent 不感知 SDK。
-- MVP 不做流式；追问的流式编辑放 P1。
+- 追问已支持流式输出：`llm.Streamer` + OpenAI SSE 适配器，Telegram 以约 1.2s 间隔 `editMessageText` 增量更新；不支持流式时自动退回普通补全。
+- 本地校验始终是最终兜底：即使走 JSON Schema，也要通过 `ParseOpinion` 的业务规则。
 
 ### 9.2 两条路径
 
 1. **首次分析（确定性管道）**：先拉数据、算指标，再让 LLM 只做解释和结构化输出。`tool_choice=none`，减少延迟和不确定性。
 2. **追问（有界 Agent）**：给 LLM 提供只读工具：
    - `get_market_snapshot(symbol, timeframes)`
-   - `get_technical_analysis(symbol, timeframe)`
+   - `get_technical_analysis(symbol, timeframe, indicators)`
    - `resolve_symbol(query)`
-   - 最多 3 轮工具调用；超过则用已有信息回答。
+   - 最多 `AGENT_MAX_TOOL_ROUNDS` 轮（默认 3）；超过则追加收口提示并用已有信息回答。
+   - 同一轮内相同工具和参数命中 turn 内缓存，避免重复拉行情。
    - 不注册任何交易、账户、转账工具。
+   - 代理不支持工具调用时自动降级为单轮文本回答。
 
 ### 9.3 结构化输出
 
@@ -472,10 +475,11 @@ type Request struct {
 
 校验规则：
 
+- 优先使用 `response_format=json_schema`（`trade_opinion`）；代理不支持时自动降级到 `json_object`，再失败仍由本地校验兜底。
 - 枚举值合法；数字为正；多头止损 < 入场 < 目标，空头相反。
 - `risk_reward` 与价格计算一致（允许 0.1 误差）。
 - 中性观点允许 `trade_plan` 为空。
-- 首次失败：带错误列表让模型修复一次；再失败则退回“确定性技术摘要 + 风险提示”，不展示坏 JSON。
+- 首次失败：带错误列表让模型修复一次；再失败则返回错误提示，不展示坏 JSON。
 - 模型不得编造新闻/财报；提示词明确“只能使用给定数据，缺失就说缺失”。
 
 ### 9.4 提示词与成本
@@ -486,8 +490,18 @@ type Request struct {
 - 模型 allowlist 由 `MODEL_ALLOWLIST` 配置；`/model` 优先展示 endpoint 的 `/models`，代理用户可额外手动输入模型名。
 - `STRICT_MODEL_LIST=true`（默认）时，模型必须出现在 endpoint 的 `/models` 返回列表中；仅当代理不支持 `/models` 时设为 false 以允许手动填写。
 - 默认模型选便宜的小模型；调用前检查用户 Key 在该 endpoint 是否有权限，失败则回退默认模型或提示换模型。
-- 自定义 `base_url` 可能不支持 `json_schema` 或工具调用；能力探测结果按 endpoint 缓存，并自动降级到 JSON 模式或纯文本。
+- 自定义 `base_url` 可能不支持 `json_schema` 或工具调用；当前在单次调用内自动降级，暂不缓存能力探测结果，避免把临时错误误判为永久能力缺失。
 - 记录 `prompt_version`、模型、token 用量、耗时，便于以后调优和计费。
+
+### 9.5 可观测性与评测
+
+- 每个 Telegram update 生成一个 `trace_id`，写入处理日志、工具调用日志、分析完成日志和 `usage_events.request_id`，可串联一次请求内的行情、LLM、摘要和重试。
+- `internal/agent/testdata/golden_cases.json` 是固定行情 fixture + 固定模型输出的回归基线，覆盖单周期、三重滤网、中性无计划、非法交易计划等场景；`TestGoldenCases` 检查：
+  - 分析请求始终携带 JSON Schema；
+  - 报告包含正确的周期和 `as_of`；
+  - prompt 引用了正确的策略、周期和 alignment；
+  - 本地业务校验仍然拒绝非法交易计划；
+  - 非冲突的三重滤网结论与观点方向一致。
 
 ## 10. 会话与上下文管理
 
@@ -595,6 +609,8 @@ MARKET_MAX_CONCURRENCY=8
 MAX_PROMPT_TOKENS=6000
 MAX_OUTPUT_TOKENS=4000
 GLOBAL_DAILY_LLM_TOKENS=2000000
+AGENT_MAX_TOOL_ROUNDS=3
+LLM_STREAMING=true
 TRADING_ENABLED=false
 ```
 

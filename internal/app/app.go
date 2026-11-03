@@ -71,6 +71,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		cfg.MaxOutputTokens,
 		cfg.LLMMaxConcurrency,
 		logger,
+		agent.WithMaxToolRounds(cfg.AgentMaxToolRounds),
+		agent.WithStreaming(cfg.LLMStreaming),
 	)
 	limiter := ratelimit.New(cfg.AnalysisRatePerMin, cfg.AnalysisRatePerHour, cfg.ChatRatePerMin)
 	go cleanupLoop(ctx, store, limiter, cfg.DataRetentionDays, logger)

@@ -128,7 +128,9 @@ func (d *Dispatcher) process(q *chatQueue, update *models.Update) bool {
 		}
 	}()
 
-	d.handler(d.ctx, update)
+	ctx, traceID := logging.EnsureTrace(d.ctx)
+	d.logger.Debug("开始处理 update", "trace_id", traceID, "update_id", update.ID)
+	d.handler(ctx, update)
 	return true
 }
 

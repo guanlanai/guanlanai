@@ -19,6 +19,7 @@ var configEnvKeys = []string{
 	"ANALYSIS_RATE_PER_MIN", "ANALYSIS_RATE_PER_HOUR", "CHAT_RATE_PER_MIN",
 	"TELEGRAM_MAX_CONCURRENCY", "LLM_MAX_CONCURRENCY", "MARKET_MAX_CONCURRENCY",
 	"MAX_PROMPT_TOKENS", "MAX_OUTPUT_TOKENS", "GLOBAL_DAILY_LLM_TOKENS",
+	"AGENT_MAX_TOOL_ROUNDS", "LLM_STREAMING",
 	"TRADING_ENABLED",
 }
 
@@ -58,6 +59,12 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.TradingEnabled {
 		t.Fatal("TradingEnabled 默认必须为 false")
+	}
+	if cfg.AgentMaxToolRounds != 3 {
+		t.Fatalf("AgentMaxToolRounds = %d, want 3", cfg.AgentMaxToolRounds)
+	}
+	if !cfg.LLMStreaming {
+		t.Fatal("LLMStreaming 默认必须为 true")
 	}
 	if !cfg.StrictModelList {
 		t.Fatal("StrictModelList 默认必须为 true")

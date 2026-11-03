@@ -57,6 +57,8 @@ type Config struct {
 	MaxPromptTokens        int
 	MaxOutputTokens        int
 	GlobalDailyLLMTokens   int64
+	AgentMaxToolRounds     int
+	LLMStreaming           bool
 
 	TradingEnabled bool
 }
@@ -155,6 +157,12 @@ func Load() (Config, error) {
 	if cfg.GlobalDailyLLMTokens, err = int64Env("GLOBAL_DAILY_LLM_TOKENS", 2_000_000); err != nil {
 		return Config{}, err
 	}
+	if cfg.AgentMaxToolRounds, err = intEnv("AGENT_MAX_TOOL_ROUNDS", 3); err != nil {
+		return Config{}, err
+	}
+	if cfg.LLMStreaming, err = boolEnv("LLM_STREAMING", true); err != nil {
+		return Config{}, err
+	}
 	if cfg.TradingEnabled, err = boolEnv("TRADING_ENABLED", false); err != nil {
 		return Config{}, err
 	}
@@ -235,6 +243,9 @@ func (c Config) validate() error {
 	}
 	if c.GlobalDailyLLMTokens <= 0 {
 		return errors.New("GLOBAL_DAILY_LLM_TOKENS 必须大于 0")
+	}
+	if c.AgentMaxToolRounds < 0 {
+		return errors.New("AGENT_MAX_TOOL_ROUNDS 不能小于 0")
 	}
 	if c.OpenAIBaseURL == "" || c.BinanceBaseURL == "" || c.CoinGeckoBaseURL == "" {
 		return errors.New("上游 API base URL 不能为空")

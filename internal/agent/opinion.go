@@ -54,6 +54,13 @@ const ChatSystemPrompt = `你是观澜（GuanLanAI）的加密货币技术分析
 使用中文，回答简洁，明确观点失效条件。
 不要保证收益，不构成投资建议；不要输出 JSON 或 Markdown 代码块。`
 
+// ToolChatSystemPrompt 在有工具可用时追加工具使用约束。
+const ToolChatSystemPrompt = ChatSystemPrompt + `
+需要新的行情或指标时，可以调用只读工具 resolve_symbol、get_market_snapshot、get_technical_analysis。
+调用前先确认标的和周期；同一轮对话内不要重复调用相同参数。
+工具只提供行情和技术面数据，不提供交易、账户或转账能力。
+引用工具结果时保留对应周期和 as_of 时间，不要自行推测缺失数据。`
+
 const SummarizeSystemPrompt = `请用中文压缩以下加密货币分析对话。
 保留当前标的、最近观点、关键价位、用户偏好和未解决问题。
 不要编造信息，不超过 300 字。只输出摘要正文。`
@@ -87,6 +94,46 @@ JSON 结构：
   "risks": ["风险"],
   "data_as_of": "RFC3339 时间",
   "disclaimer": "仅供参考，不构成投资建议。"
+}`
+
+// OpinionJSONSchema 是结构化交易观点的 JSON Schema。
+// 本地 ParseOpinion 仍然做业务校验，schema 只负责约束形状。
+const OpinionJSONSchema = `{
+  "type": "object",
+  "properties": {
+    "symbol": {"type": "string"},
+    "pair": {"type": "string"},
+    "market": {"type": "string"},
+    "mode": {"type": "string", "enum": ["short", "swing"]},
+    "direction": {"type": "string", "enum": ["bullish", "bearish", "neutral"]},
+    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+    "summary": {"type": "string"},
+    "key_levels": {
+      "type": "object",
+      "properties": {
+        "support": {"type": "array", "items": {"type": "number"}},
+        "resistance": {"type": "array", "items": {"type": "number"}}
+      },
+      "required": ["support", "resistance"]
+    },
+    "trade_plan": {
+      "type": "object",
+      "properties": {
+        "entry_low": {"type": "number"},
+        "entry_high": {"type": "number"},
+        "stop_loss": {"type": "number"},
+        "take_profit": {"type": "array", "items": {"type": "number"}},
+        "risk_reward": {"type": "number"}
+      },
+      "required": ["entry_low", "entry_high", "stop_loss", "take_profit", "risk_reward"]
+    },
+    "reasons": {"type": "array", "items": {"type": "string"}},
+    "risks": {"type": "array", "items": {"type": "string"}},
+    "data_as_of": {"type": "string"},
+    "disclaimer": {"type": "string"}
+  },
+  "required": ["direction", "confidence", "summary", "key_levels", "reasons", "risks"],
+  "additionalProperties": false
 }`
 
 // ParseOpinion 解析并校验模型输出。
