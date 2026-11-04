@@ -74,3 +74,53 @@ func TestReadyFailsWhenDBClosed(t *testing.T) {
 		t.Fatalf("/readyz status = %d, want 503", resp.StatusCode)
 	}
 }
+
+func TestMetricsEndpoint(t *testing.T) {
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("guanlanai_requests_total 1\n"))
+	})
+	server := httptest.NewServer(New(":0", db, testLogger(), "test", WithMetrics(handler)).Handler())
+	t.Cleanup(server.Close)
+
+	resp, err := http.Get(server.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics error = %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/metrics status = %d, want 200", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读取 /metrics 失败: %v", err)
+	}
+	if string(body) != "guanlanai_requests_total 1\n" {
+		t.Fatalf("/metrics body = %q", body)
+	}
+}
+
+func TestMetricsEndpointDisabledByDefault(t *testing.T) {
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	server := httptest.NewServer(New(":0", db, testLogger(), "test").Handler())
+	t.Cleanup(server.Close)
+
+	resp, err := http.Get(server.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics error = %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("/metrics status = %d, want 404", resp.StatusCode)
+	}
+}

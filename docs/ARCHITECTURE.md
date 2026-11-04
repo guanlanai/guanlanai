@@ -42,6 +42,7 @@ flowchart TB
         SEC["Secrets<br/>AES-256-GCM"]
         OBS["Observability<br/>trace_id · 日志脱敏"]
         H["Health<br/>/healthz · /readyz"]
+        M["Metrics<br/>/metrics · Prometheus"]
     end
 
     CLIENT -->|update| EDGE
@@ -58,6 +59,7 @@ flowchart TB
 - **Agent 编排层**负责分析管道、追问工具循环、摘要和护栏；它依赖 `market`、`llm`、`analysis`、`session` 的接口。
 - **领域与端口层**把确定性计算和外部适配器分开：`analysis` 是纯函数，`market` 和 `llm` 是端口，具体实现放在 `market/binance`、`llm/openai`。
 - **状态与可观测性**统一走 SQLite、AES-256-GCM、`trace_id`、日志脱敏和健康检查。
+- **指标**由 `internal/metrics` 提供独立 Prometheus registry；通过包装 Agent、LLM、行情和 Telegram 接入层记录请求数、错误率、延迟、token 和限流命中，标签只使用有界值。
 
 ## 2. 首次分析流程
 
@@ -146,20 +148,27 @@ flowchart LR
         subgraph PROD["prod · guanlanai-prod"]
             direction TB
             P1["guanlanai-prod-bot-1<br/>image: guanlanai:IMAGE_TAG · 512m / 0.75 CPU"]
-            P2[".env · Bot Token<br/>./data:/data<br/>/healthz · /readyz"]
+            P2[".env · Bot Token<br/>./data:/data<br/>/healthz · /readyz · /metrics"]
+            P3["alloy（可选 · monitoring profile）<br/>本地抓取 → remote_write"]
         end
         subgraph STAGING["staging · guanlanai-staging"]
             direction TB
             S1["guanlanai-staging-bot-1<br/>image: guanlanai:IMAGE_TAG · 256m / 0.25 CPU"]
-            S2["独立 .env / Key<br/>独立 ./data<br/>/healthz · /readyz"]
+            S2["独立 .env / Key<br/>独立 ./data<br/>/healthz · /readyz · /metrics"]
+            S3["alloy（可选 · monitoring profile）<br/>本地抓取 → remote_write"]
         end
     end
 
+    GC["Grafana Cloud Free<br/>Prometheus · 10k series · 14d"]
     BAK["VPS 本地 cron · 每日 03:15<br/>backup.sh → data/backups<br/>保留 14 天"]
     TG["Telegram Bot API<br/>long polling"]
     BIN["Binance<br/>data-api.binance.vision"]
     OAI["OpenAI 兼容 endpoint<br/>用户自带 Key / base_url"]
 
+    P1 -->|/metrics| P3
+    S1 -->|/metrics| S3
+    P3 -->|remote_write| GC
+    S3 -->|remote_write| GC
     OPS -.-> VPS
     VPS --> TG
     VPS --> BIN
@@ -170,7 +179,9 @@ flowchart LR
 - 单台 Oracle Cloud VPS（`aarch64`），prod/staging 各自一个 Docker Compose project；镜像 tag 由部署命令的 `IMAGE` 注入，图中用 `IMAGE_TAG` 表示。
 - 两套环境使用独立 `.env`、Bot Token、`APP_MASTER_KEY`、SQLite 和备份目录。
 - 容器以 `1001:1001` 运行，根文件系统只读，`/tmp` 使用 tmpfs，不发布 8080。
-- Security List/NSG 只开放 SSH；健康检查在容器内访问 `127.0.0.1:8080`。
+- Security List/NSG 只开放 SSH；健康检查和 `/metrics` 在容器内访问 `127.0.0.1:8080`。
+- 可选 Alloy 位于 `monitoring` profile，默认不启动；它只在本地抓取 `/metrics`，通过 HTTPS 出站 remote_write 到 Grafana Cloud Free，不需要发布端口。
+- Grafana Cloud 免费额度当前为 10k active series、14 天保留；prod/staging 用 `deployment`、`environment` 标签区分。
 - 每日 `03:15` 执行 `backup.sh`，对 prod/staging 分别 `VACUUM INTO`，保留 14 天。
 
 ## 5. 关键设计取舍
@@ -183,7 +194,7 @@ flowchart LR
 | 工具 | 只读、白名单 | 不暴露交易/账户/文件/任意 URL |
 | 会话 | SQLite 持久化 + 按 user/chat 隔离 | 支持多会话、群组隔离和 30 天保留 |
 | 流式 | 追问可流式，分析非流式 | 分析输出是 JSON，直接流式展示意义不大 |
-| 可观测性 | `trace_id` + 日志脱敏 | 串联一次请求内的行情、LLM、摘要和工具 |
+| 可观测性 | `trace_id` + 日志脱敏 + Prometheus | 串联一次请求，并提供请求数/错误率/延迟/token/限流指标 |
 
 ## 6. 代码索引
 
@@ -198,5 +209,6 @@ flowchart LR
 | `internal/storage/sqlite` | 仓储实现、迁移、用量记录 |
 | `internal/render` | HTML 转义、消息拆分、观点卡片 |
 | `internal/logging` | trace_id、日志脱敏 |
+| `internal/metrics` | Prometheus registry、业务指标和 `/metrics` handler |
 | `internal/config` | 环境变量解析与校验 |
 | `internal/app` | 依赖装配和生命周期 |

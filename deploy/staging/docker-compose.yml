@@ -34,3 +34,39 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  alloy:
+    profiles: ["monitoring"]
+    image: grafana/alloy:v1.21.3
+    user: "473:473"
+    command:
+      - run
+      - --disable-reporting
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      APP_ENV: staging
+      INSTANCE_NAME: guanlanai-staging
+      GRAFANA_CLOUD_REMOTE_WRITE_URL: ${GRAFANA_CLOUD_REMOTE_WRITE_URL:-}
+      GRAFANA_CLOUD_METRICS_USERNAME: ${GRAFANA_CLOUD_METRICS_USERNAME:-}
+      GRAFANA_CLOUD_API_KEY: ${GRAFANA_CLOUD_API_KEY:-}
+    volumes:
+      - ../monitoring/alloy.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 192m
+    cpus: 0.10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  alloy-data:

@@ -20,8 +20,9 @@
 
 - 生产容器：`guanlanai-prod-bot-1`
 - 测试容器：`guanlanai-staging-bot-1`
-- 镜像：staging 和 prod 当前均为 `guanlanai:phase6`
-- 容器用户：`PUID/PGID=1001`，与 `data/` 所有者一致
+- 采集容器：`guanlanai-prod-alloy-1`、`guanlanai-staging-alloy-1`
+- 镜像：bot 为 `guanlanai:metrics-v1`；Alloy 为 `grafana/alloy:v1.21.3`
+- 容器用户：`PUID/PGID=1001`，与 `data/` 所有者一致；Alloy 使用镜像内 UID 473
 - 不发布宿主端口；健康检查通过容器内 `wget` 访问 `/healthz`
 
 ## 日常检查
@@ -41,13 +42,69 @@ sudo docker compose exec -T bot wget -qO- http://127.0.0.1:8080/healthz
 sudo docker compose exec -T bot wget -qO- http://127.0.0.1:8080/readyz
 ```
 
+## Prometheus 指标
+
+`/metrics` 与健康检查共用容器内 `8080`，默认由 `METRICS_ENABLED=true` 开启。它**不发布到宿主端口**；需要查看时在容器内请求：
+
+```sh
+sudo docker compose exec -T bot wget -qO- http://127.0.0.1:8080/metrics
+```
+
+常用指标：
+
+| 指标 | 用途 |
+|---|---|
+| `guanlanai_requests_total{kind,status}` | 分析/追问/摘要请求数与错误率 |
+| `guanlanai_request_duration_seconds{kind}` | 请求延迟直方图 |
+| `guanlanai_requests_in_flight{kind}` | 正在处理的请求数 |
+| `guanlanai_llm_calls_total{operation,status}` | LLM 调用次数与错误率 |
+| `guanlanai_llm_call_duration_seconds{operation}` | LLM 调用延迟 |
+| `guanlanai_llm_tokens_total{operation,type}` | prompt/completion token 用量 |
+| `guanlanai_rate_limit_hits_total{kind}` | 按用户限流命中 |
+| `guanlanai_telegram_updates_total{result}` | Telegram update 处理结果 |
+| `guanlanai_telegram_messages_total{status}` | Telegram 发送成功/失败 |
+| `guanlanai_market_calls_total{operation,status}` | 行情解析/快照调用与错误率 |
+| `guanlanai_market_call_duration_seconds{operation}` | 行情调用延迟 |
+| `guanlanai_build_info{instance,env,version,commit}` | 实例和镜像版本 |
+
+说明：
+
+- 指标标签不包含用户 ID、chat ID、币种或模型名，避免高基数；不要自行添加这类标签。
+- 关闭指标：在 `.env` 设置 `METRICS_ENABLED=false` 并重启容器；健康检查不受影响。
+- 外部 Prometheus 采集时不要把 `8080` 发布到公网。可先绑定 `127.0.0.1:8080`，再通过 SSH 隧道或私有网络采集；Oracle Security List/NSG 仍只开 SSH。
+- 告警建议优先看：分析错误率、`guanlanai_llm_calls_total{status="error"}` 增长、LLM 延迟、限流命中、Telegram 发送失败和行情错误。
+
+### Grafana Cloud + Alloy（可选）
+
+仓库已包含免费采集模板：`deploy/monitoring/alloy.alloy`，以及 prod/staging compose 中的 `alloy` 服务（`monitoring` profile）。Alloy 在 VPS 本地抓取 `/metrics`，通过 HTTPS 出站 remote_write 到 Grafana Cloud Free，不开放入站端口。首次开通见 [GRAFANA_CLOUD_SETUP.md](GRAFANA_CLOUD_SETUP.md)。
+
+```sh
+cd /opt/guanlanai/prod
+sudo docker compose --profile monitoring up -d alloy
+sudo docker logs --tail=100 -f guanlanai-prod-alloy-1
+```
+
+验证抓取：
+
+```promql
+up{job="guanlanai-bot"}
+up{deployment="guanlanai-prod"}
+guanlanai_requests_total{kind="analysis"}
+guanlanai_llm_tokens_total
+```
+
+- 免费额度目前为 10k active series、14 天保留、3 个用户；当前两套环境远低于该额度。
+- Alloy 只接收 `APP_ENV`、`INSTANCE_NAME` 和 `GRAFANA_CLOUD_*`，不接收 Bot Token 或用户 Key。
+- 不在使用时：`sudo docker compose --profile monitoring stop alloy`，bot 不受影响。
+- 详细开通步骤见 [GRAFANA_CLOUD_SETUP.md](GRAFANA_CLOUD_SETUP.md)。
+
 ## 更新镜像
 
 本机构建并传到 VPS：
 
 ```sh
-VERSION=phase2 make docker
-docker save guanlanai:phase6 | gzip | ssh YOUR_VPS 'sudo docker load'
+VERSION=metrics-v1 make docker
+docker save guanlanai:metrics-v1 | gzip | ssh YOUR_VPS 'sudo docker load'
 ```
 
 先更新 staging：
@@ -55,7 +112,7 @@ docker save guanlanai:phase6 | gzip | ssh YOUR_VPS 'sudo docker load'
 ```sh
 ssh YOUR_VPS
 cd /opt/guanlanai/staging
-sudo env IMAGE=guanlanai:phase2 docker compose up -d
+sudo env IMAGE=guanlanai:metrics-v1 docker compose up -d bot
 sudo docker inspect --format '{{.State.Health.Status}}' guanlanai-staging-bot-1
 ```
 

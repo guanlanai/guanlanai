@@ -38,6 +38,12 @@ type ChatResult struct {
 	Usage   *llm.CompletionResponse
 }
 
+// MetricsRecorder 记录 Agent 侧的请求结果；由 app 注入，测试可传 nil。
+type MetricsRecorder interface {
+	ObserveRequest(kind, status string, duration time.Duration)
+	AddInflight(kind string, delta int)
+}
+
 // Service 编排行情、技术指标和 LLM 观点生成。
 type Service struct {
 	resolver     market.Resolver
@@ -52,6 +58,7 @@ type Service struct {
 	maxToolRounds int
 	maxPrompt     int
 	streaming     bool
+	metrics       MetricsRecorder
 }
 
 // Option 调整 Agent 服务的可选行为。
@@ -80,6 +87,13 @@ func WithMaxPromptTokens(tokens int) Option {
 		if tokens > 0 {
 			s.maxPrompt = tokens
 		}
+	}
+}
+
+// WithMetrics 注入请求级指标记录器。
+func WithMetrics(recorder MetricsRecorder) Option {
+	return func(s *Service) {
+		s.metrics = recorder
 	}
 }
 
@@ -120,7 +134,10 @@ func New(
 }
 
 // Analyze 对用户输入的币种生成结构化观点。
-func (s *Service) Analyze(ctx context.Context, usr *user.User, apiKey, query, mode string, strategy analysis.Strategy, timeframe market.Timeframe, indicators []analysis.Indicator, sessionID int64) (*Result, error) {
+func (s *Service) Analyze(ctx context.Context, usr *user.User, apiKey, query, mode string, strategy analysis.Strategy, timeframe market.Timeframe, indicators []analysis.Indicator, sessionID int64) (result *Result, err error) {
+	done := s.startRequest("analysis")
+	defer func() { done(err) }()
+
 	if usr == nil {
 		return nil, errors.New("用户配置为空")
 	}
@@ -253,13 +270,19 @@ func (s *Service) completeWithSystem(ctx context.Context, baseURL, apiKey, model
 }
 
 // Chat 基于最近一次分析回答追问；需要时最多进行 maxToolRounds 轮只读工具调用。
-func (s *Service) Chat(ctx context.Context, usr *user.User, apiKey, question, contextText string, sessionID int64) (*ChatResult, error) {
+func (s *Service) Chat(ctx context.Context, usr *user.User, apiKey, question, contextText string, sessionID int64) (result *ChatResult, err error) {
+	done := s.startRequest("chat")
+	defer func() { done(err) }()
+
 	return s.chat(ctx, usr, apiKey, question, contextText, sessionID, nil)
 }
 
 // ChatStream 与 Chat 相同，但会通过 onDelta 增量返回文本。
 // 工具调用轮次不会产生可见文本；onDelta 为 nil 时退化为普通 Chat。
-func (s *Service) ChatStream(ctx context.Context, usr *user.User, apiKey, question, contextText string, sessionID int64, onDelta func(string) error) (*ChatResult, error) {
+func (s *Service) ChatStream(ctx context.Context, usr *user.User, apiKey, question, contextText string, sessionID int64, onDelta func(string) error) (result *ChatResult, err error) {
+	done := s.startRequest("chat")
+	defer func() { done(err) }()
+
 	return s.chat(ctx, usr, apiKey, question, contextText, sessionID, onDelta)
 }
 
@@ -485,7 +508,10 @@ func accumulateUsage(total *llm.CompletionResponse, response *llm.CompletionResp
 }
 
 // Summarize 压缩较早的会话消息，保留关键上下文。
-func (s *Service) Summarize(ctx context.Context, usr *user.User, apiKey, existingSummary string, messages []session.Message) (*ChatResult, error) {
+func (s *Service) Summarize(ctx context.Context, usr *user.User, apiKey, existingSummary string, messages []session.Message) (result *ChatResult, err error) {
+	done := s.startRequest("summarize")
+	defer func() { done(err) }()
+
 	if len(messages) == 0 {
 		return &ChatResult{Content: existingSummary}, nil
 	}
@@ -528,6 +554,23 @@ func (s *Service) Summarize(ctx context.Context, usr *user.User, apiKey, existin
 		return nil, fmt.Errorf("%w: 模型返回空摘要", llm.ErrEmptyResponse)
 	}
 	return &ChatResult{Content: content, Usage: completion}, nil
+}
+
+// startRequest 记录请求开始，并返回在请求结束时调用的回调。
+func (s *Service) startRequest(kind string) func(error) {
+	if s.metrics == nil {
+		return func(error) {}
+	}
+	started := time.Now()
+	s.metrics.AddInflight(kind, 1)
+	return func(err error) {
+		s.metrics.AddInflight(kind, -1)
+		status := "ok"
+		if err != nil {
+			status = "error"
+		}
+		s.metrics.ObserveRequest(kind, status, time.Since(started))
+	}
 }
 
 func (s *Service) acquire(ctx context.Context) error {

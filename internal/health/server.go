@@ -18,19 +18,36 @@ type Server struct {
 	db         *sql.DB
 	logger     *slog.Logger
 	instance   string
+	metrics    http.Handler
+}
+
+// Option 调整 HTTP 服务的可选端点。
+type Option func(*Server)
+
+// WithMetrics 在 /metrics 暴露 Prometheus 指标。
+func WithMetrics(handler http.Handler) Option {
+	return func(s *Server) {
+		s.metrics = handler
+	}
 }
 
 // New 构造健康检查 HTTP 服务。
-func New(addr string, db *sql.DB, logger *slog.Logger, instance string) *Server {
+func New(addr string, db *sql.DB, logger *slog.Logger, instance string, opts ...Option) *Server {
 	s := &Server{
 		db:       db,
 		logger:   logger,
 		instance: instance,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
+	if s.metrics != nil {
+		mux.Handle("GET /metrics", s.metrics)
+	}
 
 	s.httpServer = &http.Server{
 		Addr:              addr,

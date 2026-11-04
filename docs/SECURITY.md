@@ -19,6 +19,8 @@
 - 会话按 `user_id + chat_id` 隔离；私聊多会话按 `scope` 校验，`/switch` 使用 `GetPrivate` 防越权。
 - 群组按成员隔离上下文；仓位和风险金额只在私聊展示，群组不展示。
 - `/key` 仅限私聊，收到 Key 后删除原消息。
+- `/metrics` 只通过内部 8080 暴露，标签不含用户 ID、chat ID、密钥、币种或模型名；不需要时可用 `METRICS_ENABLED=false` 关闭。
+- 可选 Alloy 容器只注入 `APP_ENV`、`INSTANCE_NAME` 和 `GRAFANA_CLOUD_*`，不接收 Bot Token 或用户 Key；Grafana Token 只授予 `metrics:write`，保存在 `.env`（`0600`）。
 
 相关代码：`internal/secrets`、`internal/session`、`internal/storage/sqlite/sessions.go`、`internal/telegram/service.go`。
 
@@ -122,6 +124,8 @@
 | `MAX_OUTPUT_TOKENS` | 已生效，限制模型输出 |
 | `AGENT_MAX_TOOL_ROUNDS` | 已生效，默认 3 |
 | `LLM_STREAMING` | 已生效，追问流式输出开关 |
+| `METRICS_ENABLED` | 已生效，默认 `true`；只暴露内部 `/metrics`，不含用户标识 |
+| `GRAFANA_CLOUD_*` | 可选 Alloy 采集；Token 只授予 `metrics:write`，保存在 `.env`（`0600`） |
 | `GLOBAL_DAILY_LLM_TOKENS` | **尚未生效**，P1-3 接入 |
 | `ANALYSIS_RATE_PER_MIN` / `ANALYSIS_RATE_PER_HOUR` / `CHAT_RATE_PER_MIN` | 已生效，按用户限流 |
 

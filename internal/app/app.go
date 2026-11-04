@@ -9,8 +9,11 @@ import (
 	"github.com/guanlanai/guanlanai/internal/agent"
 	"github.com/guanlanai/guanlanai/internal/config"
 	"github.com/guanlanai/guanlanai/internal/health"
+	"github.com/guanlanai/guanlanai/internal/llm"
 	"github.com/guanlanai/guanlanai/internal/llm/openai"
+	"github.com/guanlanai/guanlanai/internal/market"
 	"github.com/guanlanai/guanlanai/internal/market/binance"
+	"github.com/guanlanai/guanlanai/internal/metrics"
 	"github.com/guanlanai/guanlanai/internal/netguard"
 	"github.com/guanlanai/guanlanai/internal/ratelimit"
 	"github.com/guanlanai/guanlanai/internal/secrets"
@@ -61,26 +64,56 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		cfg.ModelAllowlist,
 	)
 
+	var metricSet *metrics.Metrics
+	if cfg.MetricsEnabled {
+		metricSet = metrics.New(metrics.WithBuildInfo(
+			cfg.InstanceName,
+			cfg.AppEnv,
+			version.Version,
+			version.Commit,
+		))
+	}
+
 	marketClient := binance.NewClient(cfg.BinanceBaseURL, cfg.BinanceFallbackBaseURL, 10*time.Second)
-	completer := openai.NewCompleter(guard, 60*time.Second)
+	var resolver market.Resolver = marketClient
+	var provider market.Provider = marketClient
+
+	var completer llm.Completer = openai.NewCompleter(guard, 60*time.Second)
+	if metricSet != nil {
+		instrumented := newInstrumentedMarket(marketClient, marketClient, metricSet)
+		resolver = instrumented
+		provider = instrumented
+		completer = newInstrumentedCompleter(completer, metricSet)
+	}
+
+	agentOptions := []agent.Option{
+		agent.WithMaxToolRounds(cfg.AgentMaxToolRounds),
+		agent.WithMaxPromptTokens(cfg.MaxPromptTokens),
+		agent.WithStreaming(cfg.LLMStreaming),
+	}
+	if metricSet != nil {
+		agentOptions = append(agentOptions, agent.WithMetrics(metricSet))
+	}
 	analyzer := agent.New(
-		marketClient,
-		marketClient,
+		resolver,
+		provider,
 		completer,
 		cfg.DefaultModel,
 		cfg.MaxOutputTokens,
 		cfg.LLMMaxConcurrency,
 		logger,
-		agent.WithMaxToolRounds(cfg.AgentMaxToolRounds),
-		agent.WithMaxPromptTokens(cfg.MaxPromptTokens),
-		agent.WithStreaming(cfg.LLMStreaming),
+		agentOptions...,
 	)
 	limiter := ratelimit.New(cfg.AnalysisRatePerMin, cfg.AnalysisRatePerHour, cfg.ChatRatePerMin)
 	go cleanupLoop(ctx, store, limiter, cfg.DataRetentionDays, logger)
 
 	var telegramErr chan error
 	if cfg.TelegramToken != "" {
-		tg, err := telegram.New(cfg, logger, store, store, store, keyCipher, validator, guard, analyzer, limiter)
+		var telegramOptions []telegram.Option
+		if metricSet != nil {
+			telegramOptions = append(telegramOptions, telegram.WithMetrics(metricSet))
+		}
+		tg, err := telegram.New(cfg, logger, store, store, store, keyCipher, validator, guard, analyzer, limiter, telegramOptions...)
 		if err != nil {
 			return fmt.Errorf("初始化 Telegram 服务: %w", err)
 		}
@@ -92,7 +125,11 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		logger.Warn("TELEGRAM_BOT_TOKEN 未配置；仅启动健康检查")
 	}
 
-	healthServer := health.New(cfg.HTTPAddr, db, logger, cfg.InstanceName)
+	var healthOptions []health.Option
+	if metricSet != nil {
+		healthOptions = append(healthOptions, health.WithMetrics(metricSet.Handler()))
+	}
+	healthServer := health.New(cfg.HTTPAddr, db, logger, cfg.InstanceName, healthOptions...)
 	healthServer.Start()
 
 	logger.Info("服务已启动",
@@ -103,6 +140,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		"http_addr", cfg.HTTPAddr,
 		"database", cfg.DatabasePath,
 		"telegram", cfg.TelegramToken != "",
+		"metrics", cfg.MetricsEnabled,
 	)
 
 	var runErr error

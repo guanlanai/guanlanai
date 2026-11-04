@@ -51,6 +51,23 @@ type MessageDeleter interface {
 	DeleteMessage(ctx context.Context, params *bot.DeleteMessageParams) (bool, error)
 }
 
+// MetricsRecorder 记录接入层计数；由 app 注入，nil 时静默跳过。
+type MetricsRecorder interface {
+	ObserveTelegramUpdate(result string)
+	ObserveRateLimit(kind string)
+	ObserveTelegramMessage(status string)
+}
+
+// Option 调整 Telegram 服务的可选行为。
+type Option func(*Service)
+
+// WithMetrics 注入接入层指标记录器。
+func WithMetrics(recorder MetricsRecorder) Option {
+	return func(s *Service) {
+		s.metrics = recorder
+	}
+}
+
 // Analyzer 生成行情观点、回答追问并压缩上下文。
 type Analyzer interface {
 	Analyze(ctx context.Context, usr *user.User, apiKey, query, mode string, strategy analysis.Strategy, timeframe market.Timeframe, indicators []analysis.Indicator, sessionID int64) (*agent.Result, error)
@@ -83,6 +100,7 @@ type Service struct {
 	guard     netguard.Policy
 	analyzer  Analyzer
 	limiter   *ratelimit.Limiter
+	metrics   MetricsRecorder
 
 	pendingMu sync.Mutex
 	pending   map[int64]pendingState
@@ -115,6 +133,7 @@ func New(
 	guard netguard.Policy,
 	analyzer Analyzer,
 	limiter *ratelimit.Limiter,
+	opts ...Option,
 ) (*Service, error) {
 	if strings.TrimSpace(cfg.TelegramToken) == "" {
 		return nil, errors.New("TELEGRAM_BOT_TOKEN 不能为空")
@@ -133,6 +152,9 @@ func New(
 		analyzer:  analyzer,
 		limiter:   limiter,
 		pending:   make(map[int64]pendingState),
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 
 	b, err := bot.New(cfg.TelegramToken,
@@ -185,6 +207,13 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 func (s *Service) onUpdate(ctx context.Context, _ *bot.Bot, update *models.Update) {
+	result := "ignored"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.ObserveTelegramUpdate(result)
+		}
+	}()
+
 	if update.Message == nil {
 		return
 	}
@@ -223,8 +252,11 @@ func (s *Service) onUpdate(ctx context.Context, _ *bot.Bot, update *models.Updat
 	)
 
 	if s.dispatcher == nil || !s.dispatcher.Enqueue(msg.Chat.ID, update) {
+		result = "overloaded"
 		s.send(ctx, msg.Chat.ID, text.Busy())
+		return
 	}
+	result = "accepted"
 }
 
 func (s *Service) handle(ctx context.Context, update *models.Update) {
@@ -366,6 +398,9 @@ func (s *Service) handleAnalyze(ctx context.Context, chatID int64, usr *user.Use
 	}
 	if s.limiter != nil {
 		if ok, retry := s.limiter.AllowAnalysis(usr.TelegramUserID); !ok {
+			if s.metrics != nil {
+				s.metrics.ObserveRateLimit("analysis")
+			}
 			s.send(ctx, chatID, text.RateLimited(retry))
 			return
 		}
@@ -470,6 +505,9 @@ func (s *Service) handleFollowUp(ctx context.Context, chatID int64, usr *user.Us
 	}
 	if s.limiter != nil {
 		if ok, retry := s.limiter.AllowChat(usr.TelegramUserID); !ok {
+			if s.metrics != nil {
+				s.metrics.ObserveRateLimit("chat")
+			}
 			s.send(ctx, chatID, text.RateLimited(retry))
 			return
 		}
@@ -1597,11 +1635,17 @@ func (s *Service) takePending(chatID int64) (pendingKind, bool) {
 
 func (s *Service) send(ctx context.Context, chatID int64, message string) {
 	if err := render.SendHTML(ctx, s.sender, chatID, message); err != nil {
+		if s.metrics != nil {
+			s.metrics.ObserveTelegramMessage("error")
+		}
 		s.logger.Error("发送 Telegram 消息失败",
 			"chat", logging.HashID(chatID),
 			"error", err,
 		)
 		return
+	}
+	if s.metrics != nil {
+		s.metrics.ObserveTelegramMessage("ok")
 	}
 	s.logger.Debug("Telegram 消息已发送",
 		"chat", logging.HashID(chatID),

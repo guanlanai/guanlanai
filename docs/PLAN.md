@@ -157,6 +157,7 @@ Update worker pool（按 chat 串行）
 - `internal/llm/openai`：只依赖 OpenAI SDK。
 - `internal/market/{yahoo,binance,coingecko}`：HTTP 适配器，统一输出标准 K 线。
 - `internal/analysis`：纯函数，无 I/O，方便测试。
+- `internal/metrics`：Prometheus registry 和业务指标；不依赖具体行情/LLM 实现。
 - `internal/storage/sqlite`：实现 repository 接口。
 - 接口定义在消费方（Go 惯例），避免循环依赖。
 
@@ -191,6 +192,7 @@ Update worker pool（按 chat 串行）
 │   │   ├── binance/         # 主行情源
 │   │   └── coingecko/       # 符号元数据/兜底
 │   ├── analysis/            # 指标、支撑阻力、趋势评分
+│   ├── metrics/             # Prometheus registry、业务指标
 │   ├── session/             # 上下文预算、摘要、裁剪
 │   ├── storage/             # repository 接口
 │   │   └── sqlite/          # 实现 + migrations
@@ -200,6 +202,8 @@ Update worker pool（按 chat 串行）
 │   ├── render/              # HTML 转义、消息拆分、观点卡片
 │   └── text/                # 中文文案常量
 ├── migrations/              # 嵌入二进制的 SQL
+├── deploy/
+│   └── monitoring/          # Grafana Alloy 采集配置
 ├── docs/
 │   ├── PLAN.md
 │   └── OPERATIONS.md
@@ -600,6 +604,11 @@ STRICT_MODEL_LIST=true
 DEFAULT_MODE=swing
 LOG_LEVEL=info
 HTTP_ADDR=:8080
+METRICS_ENABLED=true
+# 可选：Grafana Cloud Free + Alloy 采集
+GRAFANA_CLOUD_REMOTE_WRITE_URL=
+GRAFANA_CLOUD_METRICS_USERNAME=
+GRAFANA_CLOUD_API_KEY=
 DATA_RETENTION_DAYS=30
 MAX_PRIVATE_SESSIONS=20
 GROUPS_ENABLED=false
@@ -646,7 +655,7 @@ TRADING_ENABLED=false
 
 - Oracle `VM.Standard.A1.Flex`，region `iad`（US-Ashburn），Ubuntu 26.04，`aarch64`，1 OCPU，5.8GB RAM，45GB 磁盘（41GB 可用），无 swap。
 - Docker 29.1.3 / Compose 2.40.3 已安装，`ubuntu` 已加入 `docker` 组；镜像 `guanlanai:phase0`、`phase1`、`phase2` 已加载。
-- `guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，均已切 `phase6`；容器用户 `PUID/PGID=1001`，无宿主端口发布，SQLite 文件权限 0600。
+- `guanlanai-prod-bot-1`、`guanlanai-staging-bot-1` 均 healthy，均已切 `metrics-v1`；`guanlanai-prod-alloy-1`、`guanlanai-staging-alloy-1` 运行中；容器用户 `PUID/PGID=1001`，无宿主端口发布，SQLite 文件权限 0600。
 - `api.binance.com` 返回 451，`data-api.binance.vision` 返回 200，CoinGecko 200，OpenAI 401（网络可达）。
 - 22 端口用于 SSH；111（rpcbind）在监听，若无 NFS 需求建议 `systemctl disable --now rpcbind`，并确认 Security List 未放行。
 - 1 OCPU 上编译 Go 会很慢；优先本机/CI 构建 `linux/arm64` 镜像后推送或传输，避免在 VPS 上反复编译。
@@ -685,7 +694,18 @@ TRADING_ENABLED=false
 - `slog` JSON 日志到 stdout；字段：request_id、update_id、用户/chat 哈希、命令、symbol、provider、耗时、token、状态。
 - 不记录消息正文和密钥。
 - `/healthz`：DB ping + 进程存活；不每次请求都打外部 API。
-- `/metrics`（P1）：请求数、错误率、延迟、token 用量、限流命中。
+- `/metrics`（已实现，`METRICS_ENABLED=true`）：Prometheus 格式，与健康检查共用内部 HTTP 端口，默认不发布到宿主。
+  - `guanlanai_requests_total{kind,status}`：分析、追问、摘要请求数和错误率。
+  - `guanlanai_request_duration_seconds{kind}`：请求延迟直方图。
+  - `guanlanai_requests_in_flight{kind}`：正在处理的请求数。
+  - `guanlanai_llm_calls_total{operation,status}`、`guanlanai_llm_call_duration_seconds{operation}`：LLM 调用次数和延迟。
+  - `guanlanai_llm_tokens_total{operation,type}`：prompt/completion token 用量。
+  - `guanlanai_rate_limit_hits_total{kind}`：按用户限流命中。
+  - `guanlanai_telegram_updates_total{result}`、`guanlanai_telegram_messages_total{status}`：Telegram 更新和发送结果。
+  - `guanlanai_market_calls_total{operation,status}`、`guanlanai_market_call_duration_seconds{operation}`：行情调用次数和延迟。
+  - `guanlanai_build_info{instance,env,version,commit}`：实例和版本信息；另含 Go runtime/process 指标。
+  - 标签只使用有界值，不包含用户 ID、chat ID、币种或模型名，避免高基数。
+- 采集（可选）：`deploy/monitoring/alloy.alloy` + Compose `monitoring` profile；Alloy 在 VPS 本地抓取 `/metrics`，通过出站 remote_write 推送到 Grafana Cloud Free（10k series、14 天保留），不开放入站端口。
 - 错误信息对用户友好，内部错误带 request_id 方便排查。
 
 ## 14. 测试与 CI
@@ -815,7 +835,7 @@ docker-multi: docker buildx build --platform linux/amd64,linux/arm64 -t guanlana
 
 ## 18. 暂缓与未来路线
 
-- **P1（MVP 后）**：流式回复、更多 OpenAI 兼容厂商、自选列表/定时早报、新闻摘要、Prometheus 指标、管理后台。
+- **P1（MVP 后）**：流式回复、更多 OpenAI 兼容厂商、自选列表/定时早报、新闻摘要、管理后台；Prometheus 指标已实现（`internal/metrics`，`/metrics`）。
 - **P2**：USDC 充值（链选择、充值地址、链上监听、账本、配额）、订阅/次数包、推荐返利。
 - **P3**：交易所只读持仓 → 模拟盘 → 小额实盘；优先 Binance/Gate；真实下单必须二次确认、限额、kill switch。
 - **P4**：回测、策略对比、组合分析；仍不接 A 股。

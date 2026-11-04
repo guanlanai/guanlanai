@@ -9,6 +9,7 @@ import (
 var configEnvKeys = []string{
 	"APP_ENV", "INSTANCE_NAME", "TELEGRAM_BOT_TOKEN", "APP_MASTER_KEY",
 	"DATABASE_PATH", "HTTP_ADDR", "LOG_LEVEL",
+	"METRICS_ENABLED",
 	"DEFAULT_MODE", "DEFAULT_TIMEFRAME", "DEFAULT_MODEL", "MODEL_ALLOWLIST", "STRICT_MODEL_LIST",
 	"OPENAI_BASE_URL", "OPENAI_API_KEY",
 	"BINANCE_BASE_URL", "BINANCE_FALLBACK_BASE_URL", "COINGECKO_BASE_URL",
@@ -74,6 +75,22 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.GroupsEnabled {
 		t.Fatal("GroupsEnabled 默认必须为 false")
+	}
+	if !cfg.MetricsEnabled {
+		t.Fatal("MetricsEnabled 默认必须为 true")
+	}
+}
+
+func TestLoadMetricsCanBeDisabled(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("METRICS_ENABLED", "false")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.MetricsEnabled {
+		t.Fatal("METRICS_ENABLED=false 时 MetricsEnabled 必须为 false")
 	}
 }
 

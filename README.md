@@ -40,13 +40,15 @@ Phase 4 已部署：会话上下文、分析后追问、自动摘要裁剪、每
 
 Phase 5 已部署：新增 `guanlanai backup`（SQLite `VACUUM INTO`）、观点长度上限和运维文档；备份命令已在 staging 验证。
 
-技术指标新增多周期 SuperTrend（ATR 10、乘数 3），LLM 可直接引用线位、方向、距离和翻转后的 K 线数；当前生产/测试镜像为 `guanlanai:sessions-v4`。
+技术指标新增多周期 SuperTrend（ATR 10、乘数 3），LLM 可直接引用线位、方向、距离和翻转后的 K 线数；当前生产/测试镜像为 `guanlanai:metrics-v1`。
 
 会话模型 Phase A/B 已部署到 prod/staging：私聊多会话（`/new`、`/sessions`、`/switch`、`/rename`、`/delete`）和群组按成员隔离会话；镜像 `guanlanai:sessions-v4`，群组通过 `GROUPS_ENABLED=true` 开启。
 
 Agent 能力已增强：追问支持最多 3 轮只读工具调用（行情快照、技术分析、代码解析），分析输出优先使用 JSON Schema 并保留本地校验兜底，追问支持 Telegram 流式编辑；每个请求带 `trace_id`，并新增固定 fixture 的 golden-case 回归测试。对应配置为 `AGENT_MAX_TOOL_ROUNDS` 和 `LLM_STREAMING`。
 
 安全加固已部署到 prod/staging：镜像 `guanlanai:guardrails-v1`，包含提示词注入防护、不可信内容分隔、工具调用/输入预算和日志脱敏；后续 P1 清单见 [docs/SECURITY.md](docs/SECURITY.md)。
+
+Prometheus 指标已部署到 prod/staging：`internal/metrics` 提供独立的 registry，`/metrics` 与健康检查共用内部 HTTP 端口，覆盖请求数、错误率、延迟、token 用量、限流命中、Telegram 更新/发送、行情调用和构建信息。默认 `METRICS_ENABLED=true`，不要把 8080 发布到公网；采集方式见 [docs/OPERATIONS.md](docs/OPERATIONS.md)。Grafana Cloud Free + Alloy 采集已启用，配置见 `deploy/monitoring/alloy.alloy`，开通步骤见 [docs/GRAFANA_CLOUD_SETUP.md](docs/GRAFANA_CLOUD_SETUP.md)。
 
 ## 开发
 
@@ -61,6 +63,7 @@ make docker            # 构建本机架构镜像
 - 产品边界与技术约定见 [AGENTS.md](AGENTS.md)
 - 详细规划、架构、里程碑与验收标准见 [docs/PLAN.md](docs/PLAN.md)
 - VPS 部署步骤见 [deploy/README.md](deploy/README.md)
+- Grafana Cloud 免费指标采集的注册、Token 和配置步骤见 [docs/GRAFANA_CLOUD_SETUP.md](docs/GRAFANA_CLOUD_SETUP.md)
 - 日常运维、备份与回滚见 [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - 上线验收报告见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)
 - 私聊多会话/群组会话设计见 [docs/SESSION_DESIGN.md](docs/SESSION_DESIGN.md)

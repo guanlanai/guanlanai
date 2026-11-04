@@ -60,6 +60,8 @@ guanlanai backup       # VACUUM INTO 备份，容器内用 docker compose exec
 - 三重滤网 Phase 4 已部署到 prod/staging：镜像 `guanlanai:profiles-v2`，迁移 0006 已验证；新增 `/strategy triple`、`1W/1D/1h` 多周期并行拉取、确定性 `alignment`、partial screen 降级和未收盘高周期 K 线处理。
 - P1 加固已部署（`phase6`）：Telegram 发送每 chat 限速/全局限速/429 重试，以及 Binance/OpenAI 熔断器。
 - 安全加固 `guardrails-v1` 已部署到 prod/staging：系统提示词安全块、不可信内容分隔、工具调用与输入预算、日志脱敏；P1 待办见 `docs/SECURITY.md`。
+- Prometheus 指标已部署到 prod/staging：镜像 `guanlanai:metrics-v1`，`internal/metrics` 独立 registry，`/metrics` 与健康检查共用内部 8080；默认 `METRICS_ENABLED=true`，覆盖请求数、错误率、延迟、token、限流命中、Telegram 和行情调用。不要发布 8080 到公网，采集方式见 `docs/OPERATIONS.md`。
+- Grafana Cloud Free + Alloy 已部署到 prod/staging：`deploy/monitoring/alloy.alloy`，`guanlanai-{prod,staging}-alloy-1` 位于 `monitoring` profile，本地抓取 `/metrics` 后出站 remote_write，不开放入站端口；两套环境共用 Grafana Cloud Token，以 `deployment`/`environment` 标签区分。
 - Oracle Security List/NSG 只开 SSH；不要暴露 8080，健康检查在容器内或用 `127.0.0.1`。
 - 测试 bot 可同机：独立 `.env`、Bot Token、`APP_MASTER_KEY`、SQLite、volume、compose project；不共享端口和密钥。
 - staging `@ax_ha_1_bot` 和 prod `@GuanLanAI_bot` 均已在 BotFather 关闭 privacy mode，群内可直接 @提及；保持 Bot 在群内即可，不需要设为管理员。
@@ -83,9 +85,11 @@ guanlanai backup       # VACUUM INTO 备份，容器内用 docker compose exec
 - `internal/netguard/` — 自定义 base_url 的 SSRF 防护
 - `internal/llm/` — Validator 接口和错误类型
 - `internal/llm/openai/` — OpenAI 兼容 `/models` 校验与模型列表
+- `internal/metrics/` — Prometheus registry、业务指标和 `/metrics` handler
 - `internal/user/` — 用户模型与 Store 接口
 - `migrations/` — 嵌入二进制的 SQL
 - `deploy/{prod,staging}/` — VPS Compose 模板
+- `deploy/monitoring/` — Grafana Alloy 采集配置
 
 待创建（按此边界放置，不要提前建空包）：
 

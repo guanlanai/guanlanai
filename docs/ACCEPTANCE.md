@@ -84,3 +84,5 @@ prod/staging OPENAI_API_KEY 长度 0
 ## 上线结论
 
 核心产品链路可用，生产已稳定运行，验收通过。首次观点耗时按现状接受；每日备份已配置。下一轮 P1 处理 Prometheus 指标和自动 VPS 外备份；CoinGecko 为低优先级。
+
+> 后续更新：Prometheus 指标已部署到 prod/staging（镜像 `guanlanai:metrics-v1`，`METRICS_ENABLED=true`），`/metrics` 与健康检查共用内部 8080；指标清单和采集方式见 [OPERATIONS.md](OPERATIONS.md)。Grafana Cloud Free + Alloy 已部署（`deploy/monitoring/alloy.alloy`，`monitoring` profile），两套环境均 remote_write 成功。自动 VPS 外备份仍未实现。

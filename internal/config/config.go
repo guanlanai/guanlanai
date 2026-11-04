@@ -23,6 +23,8 @@ type Config struct {
 	HTTPAddr     string
 	LogLevel     string
 
+	MetricsEnabled bool
+
 	DataRetentionDays  int
 	MaxPrivateSessions int
 	GroupsEnabled      bool
@@ -101,6 +103,9 @@ func Load() (Config, error) {
 	cfg.DefaultTimeframe = timeframe
 
 	if cfg.DataRetentionDays, err = intEnv("DATA_RETENTION_DAYS", 30); err != nil {
+		return Config{}, err
+	}
+	if cfg.MetricsEnabled, err = boolEnv("METRICS_ENABLED", true); err != nil {
 		return Config{}, err
 	}
 	if cfg.MaxPrivateSessions, err = intEnv("MAX_PRIVATE_SESSIONS", 20); err != nil {

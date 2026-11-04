@@ -1,0 +1,37 @@
+// Grafana Alloy：在 VPS 本地抓取 bot 的 /metrics，并通过 remote_write 推送到 Grafana Cloud。
+// 该文件由 prod 和 staging 的 compose 共用；凭据从各自 .env 注入，不写入仓库。
+
+logging {
+	level  = "info"
+	format = "logfmt"
+}
+
+prometheus.remote_write "grafana_cloud" {
+	endpoint {
+		url = sys.env("GRAFANA_CLOUD_REMOTE_WRITE_URL")
+
+		basic_auth {
+			username = sys.env("GRAFANA_CLOUD_METRICS_USERNAME")
+			password = sys.env("GRAFANA_CLOUD_API_KEY")
+		}
+
+		queue_config {
+			max_shards = 4
+		}
+	}
+}
+
+prometheus.scrape "guanlanai_bot" {
+	job_name = "guanlanai-bot"
+	targets  = [{
+		"__address__" = "bot:8080",
+		"environment" = sys.env("APP_ENV"),
+		"deployment"  = sys.env("INSTANCE_NAME"),
+		"service"     = "guanlanai",
+	}]
+	metrics_path    = "/metrics"
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	honor_labels    = true
+	forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+}
