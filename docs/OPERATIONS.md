@@ -93,6 +93,8 @@ guanlanai_requests_total{kind="analysis"}
 guanlanai_llm_tokens_total
 ```
 
+看板 JSON 位于 `deploy/monitoring/dashboards/guanlanai-overview.json`，导入方式见 [GRAFANA_DASHBOARD.md](GRAFANA_DASHBOARD.md)。
+
 - 免费额度目前为 10k active series、14 天保留、3 个用户；当前两套环境远低于该额度。
 - Alloy 只接收 `APP_ENV`、`INSTANCE_NAME` 和 `GRAFANA_CLOUD_*`，不接收 Bot Token 或用户 Key。
 - 不在使用时：`sudo docker compose --profile monitoring stop alloy`，bot 不受影响。

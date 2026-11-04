@@ -64,6 +64,7 @@ make docker            # 构建本机架构镜像
 - 详细规划、架构、里程碑与验收标准见 [docs/PLAN.md](docs/PLAN.md)
 - VPS 部署步骤见 [deploy/README.md](deploy/README.md)
 - Grafana Cloud 免费指标采集的注册、Token 和配置步骤见 [docs/GRAFANA_CLOUD_SETUP.md](docs/GRAFANA_CLOUD_SETUP.md)
+- Grafana 看板 JSON 与导入步骤见 [docs/GRAFANA_DASHBOARD.md](docs/GRAFANA_DASHBOARD.md)
 - 日常运维、备份与回滚见 [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - 上线验收报告见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)
 - 私聊多会话/群组会话设计见 [docs/SESSION_DESIGN.md](docs/SESSION_DESIGN.md)

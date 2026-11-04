@@ -168,7 +168,25 @@ sudo docker compose --profile monitoring up -d alloy
 
 如果 Explore 里没有 Prometheus 数据源，进入 **Connections** -> **Data sources** -> **Prometheus**，使用第 2 步的 URL、Username 和第 3 步的 Token 创建，Basic Auth 的密码填 Token。
 
-## 7. 常见问题
+## 7. 导入看板
+
+仓库已提供看板 JSON：
+
+```text
+deploy/monitoring/dashboards/guanlanai-overview.json
+```
+
+在 Grafana 中进入 **Dashboards** -> **New** -> **Import**，上传该文件并选择 Prometheus 数据源即可。也可以使用：
+
+```sh
+export GRAFANA_URL=https://your-stack.grafana.net
+export GRAFANA_TOKEN=glsa_xxxxxxxxxxxxxxxxx
+./deploy/monitoring/import-dashboard.sh
+```
+
+看板说明、API 导入和排查见 [GRAFANA_DASHBOARD.md](GRAFANA_DASHBOARD.md)。
+
+## 8. 常见问题
 
 ### Alloy 容器反复重启
 
@@ -238,7 +256,7 @@ Grafana Cloud Free 当前为 10k active series、14 天保留。观澜两套环�
 sudo docker compose --profile monitoring up -d --force-recreate alloy
 ```
 
-## 8. 安全提醒
+## 9. 安全提醒
 
 - Token 只授予 `metrics:write`，不要给 Admin 权限。
 - `.env` 权限保持 `600`。

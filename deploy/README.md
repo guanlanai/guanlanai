@@ -173,6 +173,20 @@ sudo docker compose --profile monitoring stop alloy
 
 停止 Alloy 不会影响 bot；如果确定不再使用，可以 `rm -sf` 删除容器，再按需删除 `guanlanai-prod_alloy-data` volume。
 
+### 7. 导入看板
+
+看板 JSON 位于 `deploy/monitoring/dashboards/guanlanai-overview.json`。在 Grafana 中进入 **Dashboards** -> **New** -> **Import**，上传 JSON 并选择 Prometheus 数据源。
+
+也可以使用 Grafana Service Account Token 通过脚本导入：
+
+```sh
+export GRAFANA_URL=https://your-stack.grafana.net
+export GRAFANA_TOKEN=glsa_xxxxxxxxxxxxxxxxx
+./deploy/monitoring/import-dashboard.sh
+```
+
+详细说明见 [../docs/GRAFANA_DASHBOARD.md](../docs/GRAFANA_DASHBOARD.md)。
+
 ## 检查
 
 ```sh
